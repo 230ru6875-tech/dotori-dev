@@ -1,0 +1,19 @@
+name: EC2 Runner Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Check runner
+        run: |
+          echo "Hello from dotori EC2"
+          hostname
+          whoami
+          pwd
+          python3 --version
+          node --version
+          docker --version
