@@ -51,7 +51,7 @@ async function fetchDomesticGold(){
 if(!text.includes('async function fetchDomesticGold(')) text=text.replace(snapshotMarker,goldHelper+'\n'+snapshotMarker);
 
 const marketAnchor='const market=macroResults.filter(([row])=>row).map(([row])=>row);';
-if(!text.includes("key:'M04020000'")){
+if(!text.includes('const gold=await fetchDomesticGold();')){
   if(!text.includes(marketAnchor)) throw new Error('market anchor not found');
   text=text.replace(marketAnchor,marketAnchor+String.raw`
   try {
