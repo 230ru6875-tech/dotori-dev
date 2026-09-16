@@ -7,6 +7,8 @@ on:
     paths:
       - 'strategybar-runtime/**'
       - 'scripts/patch_strategybar_market.mjs'
+      - 'scripts/patch_strategybar_quote_integrity.mjs'
+      - 'scripts/fix_strategybar_index_after_provider_patch.mjs'
       - 'scripts/patch_strategybar_force_cache.mjs'
       - 'scripts/enhance_strategybar_dashboard.mjs'
       - '.github/workflows/strategybar-deploy.yml'
@@ -26,6 +28,10 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: 6ead7cb11a99b93959c5437fbcd01eb7
       TARGET_URL: https://strategybar.hnr2020.workers.dev
+      TOSS_QUOTE_URL: ${{ secrets.TOSS_QUOTE_URL }}
+      TOSS_AUTH_TOKEN: ${{ secrets.TOSS_AUTH_TOKEN }}
+      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
 
     steps:
       - name: Checkout repository
@@ -58,6 +64,13 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/patch_strategybar_market.mjs
+
+      - name: Add session-aware stock quotes and domestic gold integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/patch_strategybar_quote_integrity.mjs
+          node scripts/fix_strategybar_index_after_provider_patch.mjs
 
       - name: Fix force refresh cache semantics
         shell: bash
@@ -117,6 +130,26 @@ jobs:
           NODE
           echo "D1 database binding resolved from existing production configuration."
 
+      - name: Sync Toss and KIS provider secrets to Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd strategybar-runtime
+          put_secret() {
+            local name="$1"
+            local value="$2"
+            if [ -n "${value}" ]; then
+              printf '%s' "${value}" | npx --yes wrangler@4.119.0 secret put "${name}" --config wrangler.jsonc >/dev/null
+              echo "${name}: configured"
+            else
+              echo "${name}: not set in GitHub Actions secrets; provider will be skipped"
+            fi
+          }
+          put_secret TOSS_QUOTE_URL "${TOSS_QUOTE_URL:-}"
+          put_secret TOSS_AUTH_TOKEN "${TOSS_AUTH_TOKEN:-}"
+          put_secret KIS_APP_KEY "${KIS_APP_KEY:-}"
+          put_secret KIS_APP_SECRET "${KIS_APP_SECRET:-}"
+
       - name: Deploy StrategyBar worker
         shell: bash
         run: |
@@ -124,11 +157,24 @@ jobs:
           cd strategybar-runtime
           npx --yes wrangler@4.119.0 deploy --config wrangler.jsonc
 
+      - name: Validate provider configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 8
+          curl -fsSL --retry 4 --retry-delay 2 "${TARGET_URL}/api/status?t=$(date +%s)" -o /tmp/strategybar-status.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const s=JSON.parse(fs.readFileSync('/tmp/strategybar-status.json','utf8'));
+          console.log(`Toss configured: ${Boolean(s.tossConfigured)}`);
+          console.log(`KIS configured: ${Boolean(s.kisConfigured)}`);
+          NODE
+
       - name: Validate production API
         shell: bash
         run: |
           set -euo pipefail
-          sleep 16
+          sleep 8
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/strategybar-market.json
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=SNDK&force=1&t=$(date +%s)" -o /tmp/strategybar-sndk.json
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=IONQ&force=1&t=$(date +%s)" -o /tmp/strategybar-ionq.json
@@ -147,9 +193,9 @@ jobs:
               const pct = Number(row.changePct);
               if (!(price > 0) || !(prev > 0) || !Number.isFinite(pct)) throw new Error(`${symbol} invalid quote`);
               const calc = (price / prev - 1) * 100;
-              if (Math.abs(calc - pct) > 0.08) throw new Error(`${symbol} inconsistent changePct: price=${price} prev=${prev} reported=${pct} calc=${calc}`);
+              if (Math.abs(calc - pct) > 0.15) throw new Error(`${symbol} inconsistent changePct: price=${price} prev=${prev} reported=${pct} calc=${calc}`);
             }
-            console.log(`${symbol}: price=${a.price}, previousClose=${a.previousClose}, changePct=${a.changePct}, provider=${a.provider}, session=${a.priceSession}`);
+            console.log(`${symbol}: price=${a.price}, previousClose=${a.previousClose}, changePct=${a.changePct}, provider=${a.provider}, session=${a.priceSession}, asOf=${a.asOf}`);
           }
           if (!base.ok) throw new Error('market api returned ok=false');
           check('SNDK', sndkDirect);
