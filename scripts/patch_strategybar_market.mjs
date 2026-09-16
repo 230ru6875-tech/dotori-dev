@@ -27,10 +27,11 @@ function parseInvestingBondRow(plain, labels, key, label) {
   }
   if (pos<0) throw new Error('Investing.com '+label+' label not found');
 
-  // Start after the maturity label so 2/10/30 cannot be mistaken for the yield.
   const window=plain.slice(pos+matched.length,pos+matched.length+420);
   const tokens=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?|\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/g)].map(m=>m[0]);
-  const numeric=tokens.filter(x=>!x.includes(':')).map(x=>x.replaceAll(',',''));
+  let numeric=tokens.filter(x=>!x.includes(':')).map(x=>x.replaceAll(',',''));
+  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
+  while(numeric.length && maturity!==null && Math.abs(Number(numeric[0].replace('%',''))-maturity)<0.0001){numeric=numeric.slice(1);}
   if (numeric.length<6) throw new Error('Investing.com '+label+' columns not found: '+window.slice(0,220));
 
   const value=Number(numeric[0].replace('%',''));
@@ -139,4 +140,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: maturity-safe Investing.com Treasury parser + Cboe VIX fallback.');
+console.log('Patched market.js: explicit maturity skip + Investing.com Treasury + Cboe VIX fallback.');
