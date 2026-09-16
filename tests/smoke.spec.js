@@ -2,7 +2,7 @@ const fs = require('fs');
 const { test, expect } = require('@playwright/test');
 
 const TARGET_URL = 'https://strategybar.hnr2020.workers.dev/?view=1&tab=dashboard';
-const WATCHED_SYMBOLS = ['IONQ', 'SNDK', 'AVGO', 'ORCL', 'QLD'];
+const WATCHED_SYMBOLS = ['SNDK', 'IONQ', 'AVGO', 'ORCL'];
 
 function ensureArtifactsDir() {
   fs.mkdirSync('artifacts', { recursive: true });
@@ -37,7 +37,7 @@ function buildSymbolDiagnostics(lines, symbol) {
   return { symbol, found: true, context, ...extractNumberCandidates(context.join(' | ')) };
 }
 
-test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
+test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
   ensureArtifactsDir();
 
   const consoleErrors = [];
@@ -64,19 +64,26 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
         const text = await res.text();
         let body = null;
         try { body = JSON.parse(text); } catch {}
-        return { url, status: res.status, ok: res.ok, body, text: text.slice(0, 1000) };
+        return { url, status: res.status, ok: res.ok, body, text: text.slice(0, 2000) };
       } catch (error) {
         return { url, status: null, ok: false, error: String(error) };
       }
     }
     const market = await getJson(`/api/market?force=1&t=${Date.now()}`);
-    const qldOnly = await getJson(`/api/market?only=QLD&force=1&t=${Date.now()}`);
-    return { market, qldOnly };
+    const sndkOnly = await getJson(`/api/market?only=SNDK&force=1&t=${Date.now()}`);
+    return { market, sndkOnly };
   });
 
   const marketSymbols = Object.keys(apiDiagnostics.market?.body?.symbols || {}).sort();
-  const qldFromMarket = apiDiagnostics.market?.body?.symbols?.QLD || null;
-  const qldFromOnly = apiDiagnostics.qldOnly?.body?.symbols?.QLD || null;
+  const sndkFromMarket = apiDiagnostics.market?.body?.symbols?.SNDK || null;
+  const sndkFromOnly = apiDiagnostics.sndkOnly?.body?.symbols?.SNDK || null;
+
+  // SNDK is the primary watched symbol and must always be present in both the
+  // normal market payload and the direct-symbol payload.
+  expect(sndkFromMarket, 'SNDK missing from default /api/market response').not.toBeNull();
+  expect(sndkFromOnly, 'SNDK missing from /api/market?only=SNDK response').not.toBeNull();
+  expect(Number(sndkFromOnly.price), 'SNDK price must be a positive number').toBeGreaterThan(0);
+  expect(['PREMARKET', 'REGULAR', 'AFTER_HOURS']).toContain(String(sndkFromOnly.priceSession || 'REGULAR'));
 
   const refreshButton = page.getByRole('button', { name: /갱신|새로고침|refresh/i }).first();
   let refreshButtonFound = false;
@@ -100,6 +107,9 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
   const visibleSymbols = symbolDiagnostics.filter((item) => item.found).map((item) => item.symbol);
   const missingSymbols = symbolDiagnostics.filter((item) => !item.found).map((item) => item.symbol);
   const suspiciousFound = suspiciousTokens.filter((token) => bodyText.includes(token));
+  const sndkUi = symbolDiagnostics.find((item) => item.symbol === 'SNDK');
+
+  expect(sndkUi?.found, 'SNDK must be visible on the dashboard').toBeTruthy();
 
   const report = {
     checkedAt: new Date().toISOString(),
@@ -108,6 +118,7 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
     title: await page.title(),
     httpStatus: response.status(),
     bodyTextLength: bodyText.length,
+    primarySymbol: 'SNDK',
     visibleSymbols,
     missingSymbols,
     suspiciousFoundBeforeRefresh,
@@ -115,21 +126,32 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
     refreshButtonFound,
     refreshClickSucceeded,
     symbolDiagnostics,
+    sndk: {
+      ui: sndkUi || null,
+      defaultMarket: sndkFromMarket,
+      directMarket: sndkFromOnly,
+      provider: sndkFromOnly?.provider || sndkFromMarket?.provider || null,
+      source: sndkFromOnly?.source || sndkFromMarket?.source || null,
+      priceSession: sndkFromOnly?.priceSession || sndkFromMarket?.priceSession || null,
+      sessionLabel: sndkFromOnly?.sessionLabel || sndkFromMarket?.sessionLabel || null,
+      price: sndkFromOnly?.price ?? sndkFromMarket?.price ?? null,
+      previousClose: sndkFromOnly?.previousClose ?? sndkFromMarket?.previousClose ?? null,
+      changePct: sndkFromOnly?.changePct ?? sndkFromMarket?.changePct ?? null,
+      asOf: sndkFromOnly?.asOf || sndkFromMarket?.asOf || null,
+    },
     marketApi: {
       status: apiDiagnostics.market?.status,
       ok: apiDiagnostics.market?.ok,
       symbolCount: marketSymbols.length,
       symbols: marketSymbols,
-      qld: qldFromMarket,
       rawError: apiDiagnostics.market?.error || null,
     },
-    qldOnlyApi: {
-      status: apiDiagnostics.qldOnly?.status,
-      ok: apiDiagnostics.qldOnly?.ok,
-      qld: qldFromOnly,
-      responseOk: apiDiagnostics.qldOnly?.body?.ok ?? null,
-      responseError: apiDiagnostics.qldOnly?.body?.error ?? null,
-      rawError: apiDiagnostics.qldOnly?.error || null,
+    sndkOnlyApi: {
+      status: apiDiagnostics.sndkOnly?.status,
+      ok: apiDiagnostics.sndkOnly?.ok,
+      responseOk: apiDiagnostics.sndkOnly?.body?.ok ?? null,
+      responseError: apiDiagnostics.sndkOnly?.body?.error ?? null,
+      rawError: apiDiagnostics.sndkOnly?.error || null,
     },
     consoleErrors,
     pageErrors,
@@ -138,5 +160,6 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
   fs.writeFileSync('artifacts/strategybar-report.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
   await page.screenshot({ path: 'artifacts/strategybar-dashboard.png', fullPage: true });
+
   expect(pageErrors, `Page errors found: ${pageErrors.join(' | ')}`).toHaveLength(0);
 });
