@@ -22,3 +22,11 @@ jobs:
 
       - name: Run Playwright smoke test
         run: npx playwright test tests/smoke.spec.js --reporter=line
+
+      - name: Upload dashboard screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategybar-dashboard-screenshot
+          path: artifacts/strategybar-dashboard.png
+          if-no-files-found: warn
