@@ -20,27 +20,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Restore and validate control plane package
+      - name: Validate package checksum and ZIP
         shell: bash
         run: |
           set -euo pipefail
-          rm -f /tmp/ai_control_plane_v1.zip
-          base64 -d ai-control-plane/ai_control_plane_v1.zip.b64 > /tmp/ai_control_plane_v1.zip
-          test -s /tmp/ai_control_plane_v1.zip
-          unzip -t /tmp/ai_control_plane_v1.zip
-          echo "Control plane ZIP restore: PASS"
+          ZIP=ai-control-plane/ai_control_plane_v1.zip
+          test -s "$ZIP"
+          echo "dd89cde537e10e0e3a50b527987bac7eb8fd505e68e8974f2ad90a932f363c23  $ZIP" | sha256sum -c -
+          unzip -t "$ZIP"
+          echo "Control plane package integrity: PASS"
 
       - name: Install control plane on EC2
         shell: bash
         run: |
           set -euo pipefail
           TARGET=/opt/ai-workspace
+          STAGE=/tmp/ai-control-plane-install
           sudo mkdir -p "$TARGET"
           sudo chown -R "$(id -un):$(id -gn)" "$TARGET"
-          rm -rf /tmp/ai-control-plane-install
-          mkdir -p /tmp/ai-control-plane-install
-          unzip -q -o /tmp/ai_control_plane_v1.zip -d /tmp/ai-control-plane-install
-          rsync -a --delete --exclude '.venv/' /tmp/ai-control-plane-install/ai_control_plane_v1/ "$TARGET/"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          unzip -q -o ai-control-plane/ai_control_plane_v1.zip -d "$STAGE"
+          cp -a "$STAGE/ai_control_plane_v1/." "$TARGET/"
           chmod +x "$TARGET/runner/task_runner.py" "$TARGET/scripts/bootstrap_ec2.sh" "$TARGET/scripts/healthcheck.py" "$TARGET/scripts/run_inbox.sh"
           echo "Installed AI Control Plane to $TARGET"
 
@@ -76,8 +77,12 @@ jobs:
           print('HamburgerTrader LEVEL 5 policy: PASS')
           PY
 
-      - name: Show installed layout
+      - name: Verify installed files
         shell: bash
         run: |
           set -euo pipefail
+          test -x /opt/ai-workspace/runner/task_runner.py
+          test -s /opt/ai-workspace/state/health.json
+          test -s /opt/ai-workspace/config/policies/hamburgertrader_level5.json
+          echo 'AI Control Plane install: PASS'
           find /opt/ai-workspace -maxdepth 3 -type f | sort | head -200
