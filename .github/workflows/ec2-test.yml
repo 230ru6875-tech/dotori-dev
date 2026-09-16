@@ -11,12 +11,8 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Check runner
-        run: |
-          echo "Hello from dotori EC2"
-          hostname
-          whoami
-          pwd
-          python3 --version
-          node --version
-          docker --version
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run EC2 healthcheck
+        run: bash scripts/healthcheck.sh
