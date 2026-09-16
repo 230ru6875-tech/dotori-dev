@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const path='strategybar-runtime/cloudflare/index.js';
 let text=fs.readFileSync(path,'utf8');
@@ -35,4 +36,8 @@ if (!text.includes("['DGS2','DGS10','DGS30'].includes(row.key)")) {
 }
 
 fs.writeFileSync(path,text);
-console.log('Patched StrategyBar cache and protected Npay Treasury yields from broker quote overlays.');
+
+for (const file of ['strategybar-runtime/cloudflare/market.js','strategybar-runtime/cloudflare/index.js']) {
+  execFileSync(process.execPath,['--check',file],{stdio:'inherit'});
+}
+console.log('Patched StrategyBar cache, protected Npay Treasury yields, and syntax-checked generated Worker code.');
