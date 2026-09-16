@@ -29,14 +29,15 @@ function parseInvestingBondRow(plain, labels, key, label) {
 
   const window=plain.slice(pos+matched.length,pos+matched.length+420);
   const tokens=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?|\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/g)].map(m=>m[0]);
+  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
 
-  // Investing.com bond table renders yield columns with decimals (e.g. 4.719, 5.017),
-  // while the maturity embedded in the instrument name is an integer (2/10/30).
-  // Only decimal-valued table cells are eligible for yield data so maturity numbers
-  // can never be mistaken for the current yield.
+  // Investing.com may render the maturity itself as 2.000 / 10.000 / 30.000.
+  // Keep decimal table cells, but explicitly discard any cell numerically equal
+  // to this instrument's maturity before mapping the yield columns.
   const numeric=tokens
     .filter(x=>!x.includes(':') && x.includes('.'))
-    .map(x=>x.replaceAll(',',''));
+    .map(x=>x.replaceAll(',',''))
+    .filter(x=>maturity===null || Math.abs(Number(x.replace('%',''))-maturity)>0.0001);
 
   if (numeric.length<6) throw new Error('Investing.com '+label+' columns not found: '+window.slice(0,220));
 
@@ -46,7 +47,6 @@ function parseInvestingBondRow(plain, labels, key, label) {
   const low=Number(numeric[3].replace('%',''));
   const change=Number(numeric[4].replace('%',''));
   const changePct=Number(numeric[5].replace('%',''));
-  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
 
   if (![value,previous,high,low,change,changePct].every(Number.isFinite)) throw new Error('Investing.com '+label+' numeric parse failed: '+numeric.slice(0,8).join('|'));
   if (!(value>0 && value<20 && previous>0 && previous<20)) throw new Error('Investing.com '+label+' implausible yield: '+numeric.slice(0,8).join('|'));
@@ -150,4 +150,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: decimal Treasury columns only + Investing.com yields + Cboe VIX fallback.');
+console.log('Patched market.js: maturity-decimal exclusion + Investing.com Treasury + Cboe VIX fallback.');
