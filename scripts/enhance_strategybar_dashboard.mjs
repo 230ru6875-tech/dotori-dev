@@ -20,9 +20,18 @@ const fmt=(n,d=2)=>finite(n)?Number(n).toLocaleString('ko-KR',{maximumFractionDi
 const pct=n=>finite(n)?(Number(n)>=0?'+':'')+Number(n).toFixed(2)+'%':'--';
 const ratio=n=>finite(n)?Number(n).toFixed(2)+'×':'--';
 const cls=n=>!finite(n)?'sb-neutral':Number(n)>0?'sb-pos':Number(n)<0?'sb-neg':'sb-neutral';
+const LABELS={
+  '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
+  'DX-Y.NYB':'DXY','KRW=X':'USD/KRW','CL=F':'WTI','DGS2':'미 2년물','DGS10':'미 10년물','DGS30':'미 30년물',
+  'M04020000':'금 1G 국내시세'
+};
+function replaceExactText(root,from,to){if(!root||!from||from===to)return;const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);const nodes=[];while(w.nextNode())nodes.push(w.currentNode);for(const n of nodes){if((n.nodeValue||'').trim()===from)n.nodeValue=(n.nodeValue||'').replace(from,to)}}
 function marketCard(name){return [...document.querySelectorAll('div,section,article')].filter(e=>{const t=(e.textContent||'').trim();return t.includes(name)&&t.length<600}).sort((a,b)=>(a.textContent||'').length-(b.textContent||'').length)[0]||null}
+function findMarketCard(row){const canonical=LABELS[row.key]||row.name||row.label||row.key;const aliases=[canonical,row.name,row.label,row.key].filter(Boolean);for(const a of aliases){const c=marketCard(a);if(c)return c}return null}
 function vixReading(v){const n=Number(v);if(!finite(n))return'해석 대기';if(n<15)return'안정 · 변동성 낮음';if(n<20)return'보통 · 정상 범위';if(n<25)return'경계 · 변동성 확대';if(n<30)return'위험 확대 · 신규매수 보수적';return'공포 구간 · 급격한 변동 주의'}
-function applyMarket(data){const names=['S&P 500','나스닥 100','필라델피아 반도체','러셀 2000','VIX','DXY','USD/KRW','WTI','미 2년물','미 10년물','미 30년물'];const cards=names.map(marketCard).filter((x,i,a)=>x&&a.indexOf(x)===i);if(cards.length<3)return;let parent=cards[0].parentElement;while(parent&&parent!==document.body&&!cards.every(c=>parent.contains(c)))parent=parent.parentElement;if(!parent||parent===document.body)return;parent.classList.add('sb-market-pulse-grid');cards.forEach(c=>c.classList.add('sb-market-card'));const v=(data.market||[]).find(x=>x.key==='^VIX'||String(x.name||'').toUpperCase()==='VIX');const vc=marketCard('VIX');if(vc){vc.querySelector('.sb-vix-reading')?.remove();const d=document.createElement('div');d.className='sb-vix-reading';d.textContent=vixReading(v?.value);vc.appendChild(d)}}
+function applyMarket(data){const wanted=['^GSPC','^NDX','^SOX','^RUT','^VIX','DX-Y.NYB','KRW=X','CL=F','DGS2','DGS10','DGS30','M04020000'];const rows=(data.market||[]).filter(r=>wanted.includes(r.key));const cards=[];for(const row of rows){const card=findMarketCard(row);if(!card)continue;const label=LABELS[row.key]||row.name||row.label||row.key;replaceExactText(card,row.key,label);if(row.name&&row.name!==label)replaceExactText(card,row.name,label);if(row.label&&row.label!==label)replaceExactText(card,row.label,label);card.classList.add('sb-market-card');cards.push(card)}
+if(cards.length>=3){let parent=cards[0].parentElement;while(parent&&parent!==document.body&&!cards.every(c=>parent.contains(c)))parent=parent.parentElement;if(parent&&parent!==document.body)parent.classList.add('sb-market-pulse-grid')}
+const v=(data.market||[]).find(x=>x.key==='^VIX'||String(x.name||'').toUpperCase()==='VIX');const vc=findMarketCard(v||{key:'^VIX',name:'VIX'});if(vc){vc.querySelector('.sb-vix-reading')?.remove();const d=document.createElement('div');d.className='sb-vix-reading';d.textContent=vixReading(v?.value);vc.appendChild(d)}}
 function spark(row){const up=finite(row.changePct)&&Number(row.changePct)>=0;return '<span class="sb-spark '+(up?'sb-pos':'sb-neg')+'">⌁⌃⌄⌁⌃⌄⌃⌁</span>'}
 function risk(row){let r=50;if(finite(row.rsi)&&row.rsi>70)r+=15;if(finite(row.volatility20)&&row.volatility20>80)r+=15;if(finite(row.ma20Gap)&&row.ma20Gap<-8)r+=10;return Math.max(0,Math.min(99,Math.round(r)))}
 function stockHost(){const labels=['전략 신호','전략신호','RSI','MA20','VWAP'];const nodes=[...document.querySelectorAll('section,div')].filter(e=>{const t=e.textContent||'';return labels.filter(x=>t.includes(x)).length>=3&&t.length>500});return nodes.sort((a,b)=>(a.textContent||'').length-(b.textContent||'').length)[0]||null}
@@ -35,4 +44,4 @@ const boot=()=>{enhance();setInterval(enhance,60000)};document.readyState==='loa
 html=html.replace(/\n?<style id="strategybar-enhancer-style">[\s\S]*?<\/style>\s*<script id="strategybar-enhancer-script">[\s\S]*?<\/script>/i,'');
 html=html.replace(/<\/body>/i,injection+'\n</body>');
 fs.writeFileSync(path,html);
-console.log('Applied Market Pulse cards and detailed one-row stock table.');
+console.log('Applied Korean macro labels, domestic gold card, VIX reading, and detailed one-row stock table.');
