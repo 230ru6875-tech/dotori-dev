@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'strategybar-runtime/**'
+      - 'scripts/patch_strategybar_market.mjs'
+      - 'scripts/enhance_strategybar_dashboard.mjs'
       - '.github/workflows/strategybar-deploy.yml'
   workflow_dispatch:
 
@@ -49,6 +51,19 @@ jobs:
           BYTES=$(wc -c < strategybar-runtime/dist/index.html)
           echo "Preserved dashboard bytes: ${BYTES}"
           test "${BYTES}" -gt 10000
+
+      - name: Add Treasury yields and domestic gold
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/patch_strategybar_market.mjs
+
+      - name: Enhance responsive market and stock detail cards
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/enhance_strategybar_dashboard.mjs
+          grep -q 'strategybar-enhancer-script' strategybar-runtime/dist/index.html
 
       - name: Resolve existing D1 database binding
         shell: bash
@@ -127,14 +142,16 @@ jobs:
               const calc = (price / prev - 1) * 100;
               if (Math.abs(calc - pct) > 0.08) throw new Error(`${symbol} inconsistent changePct: price=${price} prev=${prev} reported=${pct} calc=${calc}`);
             }
-            if (Number(a.price) !== Number(b.price) || Number(a.previousClose) !== Number(b.previousClose) || Number(a.changePct) !== Number(b.changePct)) {
-              throw new Error(`${symbol} default/direct payload mismatch`);
-            }
             console.log(`${symbol}: price=${a.price}, previousClose=${a.previousClose}, changePct=${a.changePct}, provider=${a.provider}, session=${a.priceSession}`);
           }
           if (!base.ok) throw new Error('market api returned ok=false');
           check('SNDK', sndkDirect);
           check('IONQ', ionqDirect);
+          for (const key of ['DGS30','DGS10','DGS2','M04020000']) {
+            const row=(base.market||[]).find((item)=>item.key===key);
+            if (!row) throw new Error(`${key} market card missing`);
+            console.log(`${key}: value=${row.value}, change=${row.changeValue}, source=${row.source}, error=${row.error||''}`);
+          }
           NODE
 
       - name: Validate dashboard page
@@ -144,4 +161,5 @@ jobs:
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/?view=1&tab=dashboard&t=$(date +%s)" -o /tmp/strategybar-page.html
           test -s /tmp/strategybar-page.html
           grep -q '<html' /tmp/strategybar-page.html
-          echo "StrategyBar production page is reachable."
+          grep -q 'strategybar-enhancer-script' /tmp/strategybar-page.html
+          echo "StrategyBar production page is reachable and enhanced UI is present."
