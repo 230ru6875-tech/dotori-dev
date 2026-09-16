@@ -1,0 +1,58 @@
+name: AI StrategyBar Connect
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ai-strategybar-connect.yml'
+
+jobs:
+  connect:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync StrategyBar into AI workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/ai-workspace
+          PROJECT="$BASE/projects/strategybar"
+          mkdir -p "$PROJECT" "$BASE/reports" "$BASE/screenshots" "$BASE/state"
+          rsync -a --delete --exclude '.git/' --exclude 'node_modules/' ./ "$PROJECT/"
+          printf '%s\n' "$GITHUB_SHA" > "$BASE/state/strategybar_connected_commit.txt"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /opt/ai-workspace/projects/strategybar
+          npm install
+          npx playwright install chromium
+
+      - name: Run StrategyBar Playwright verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /opt/ai-workspace/projects/strategybar
+          npx playwright test tests/smoke.spec.js --reporter=line
+
+      - name: Save verification result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=/opt/ai-workspace
+          SRC="$BASE/projects/strategybar/artifacts"
+          if [ -f "$SRC/strategybar-report.json" ]; then
+            cp "$SRC/strategybar-report.json" "$BASE/reports/strategybar-playwright-latest.json"
+          fi
+          if [ -f "$SRC/strategybar-dashboard.png" ]; then
+            cp "$SRC/strategybar-dashboard.png" "$BASE/screenshots/strategybar-latest.png"
+          fi
+          cat > "$BASE/state/strategybar.json" <<EOF
+          {"project":"strategybar","commit":"$GITHUB_SHA","connected":true,"verified_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          cat "$BASE/state/strategybar.json"
