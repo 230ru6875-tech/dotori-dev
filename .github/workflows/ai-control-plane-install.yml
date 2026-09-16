@@ -20,6 +20,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Restore and validate control plane package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/ai_control_plane_v1.zip
+          base64 -d ai-control-plane/ai_control_plane_v1.zip.b64 > /tmp/ai_control_plane_v1.zip
+          test -s /tmp/ai_control_plane_v1.zip
+          unzip -t /tmp/ai_control_plane_v1.zip
+          echo "Control plane ZIP restore: PASS"
+
       - name: Install control plane on EC2
         shell: bash
         run: |
@@ -29,7 +39,7 @@ jobs:
           sudo chown -R "$(id -un):$(id -gn)" "$TARGET"
           rm -rf /tmp/ai-control-plane-install
           mkdir -p /tmp/ai-control-plane-install
-          unzip -q -o ai-control-plane/ai_control_plane_v1.zip -d /tmp/ai-control-plane-install
+          unzip -q -o /tmp/ai_control_plane_v1.zip -d /tmp/ai-control-plane-install
           rsync -a --delete --exclude '.venv/' /tmp/ai-control-plane-install/ai_control_plane_v1/ "$TARGET/"
           chmod +x "$TARGET/runner/task_runner.py" "$TARGET/scripts/bootstrap_ec2.sh" "$TARGET/scripts/healthcheck.py" "$TARGET/scripts/run_inbox.sh"
           echo "Installed AI Control Plane to $TARGET"
