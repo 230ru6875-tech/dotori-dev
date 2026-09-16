@@ -2,13 +2,27 @@ import fs from 'node:fs';
 
 const path='strategybar-runtime/cloudflare/index.js';
 let text=fs.readFileSync(path,'utf8');
-const old1='if (cached && (age<60000 || (force&&age<15000))) {';
-const new1='if (cached && ((!force && age<60000) || (force && age<15000))) {';
-const old2='if (cached && (age<60000 || (force&&age<15000))) return await overlayBrokerQuotes(env,cached.payload);';
-const new2='if (cached && ((!force && age<60000) || (force && age<15000))) return await overlayBrokerQuotes(env,cached.payload);';
-if (!text.includes(old1)) throw new Error('Base-market cache condition not found');
-if (!text.includes(old2)) throw new Error('Extra-quote cache condition not found');
-text=text.replace(old1,new1).replace(old2,new2);
-text=text.replaceAll('"market:base"','"market:base:v2"');
+
+const replacements=[
+  ['if (cached && (age<60000 || (force&&age<15000))) {','if (cached && !force && age<60000) {'],
+  ['if (cached && ((!force && age<60000) || (force && age<15000))) {','if (cached && !force && age<60000) {'],
+  ['if (cached && (age<60000 || (force&&age<15000))) return await overlayBrokerQuotes(env,cached.payload);','if (cached && !force && age<60000) return await overlayBrokerQuotes(env,cached.payload);'],
+  ['if (cached && ((!force && age<60000) || (force && age<15000))) return await overlayBrokerQuotes(env,cached.payload);','if (cached && !force && age<60000) return await overlayBrokerQuotes(env,cached.payload);']
+];
+
+let changed=false;
+for (const [from,to] of replacements) {
+  if (text.includes(from)) {
+    text=text.replace(from,to);
+    changed=true;
+  }
+}
+if (!changed && !text.includes('if (cached && !force && age<60000)')) {
+  throw new Error('StrategyBar cache condition not found');
+}
+
+text=text.replaceAll('"market:base"','"market:base:v3"');
+text=text.replaceAll('"market:base:v2"','"market:base:v3"');
+
 fs.writeFileSync(path,text);
-console.log('Patched force=1 cache semantics and bumped base market cache key to v2.');
+console.log('Patched StrategyBar cache: force=1 always refreshes; base cache key is market:base:v3.');
