@@ -18,21 +18,31 @@ function normalizeHtmlText(html='') {
 }
 
 function parseNpayBondRow(plain, instrumentLabel, key, label) {
-  const pos=plain.indexOf(instrumentLabel);
-  if(pos<0) throw new Error('Npay '+instrumentLabel+' label not found');
-  const window=plain.slice(pos+instrumentLabel.length,pos+instrumentLabel.length+180);
-  const yieldMatch=window.match(/([0-9]+(?:\.[0-9]+)?)/);
-  if(!yieldMatch) throw new Error('Npay '+instrumentLabel+' yield not found: '+window.slice(0,120));
-  const value=Number(yieldMatch[1]);
+  const escaped=instrumentLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const rowPattern=new RegExp(escaped+'\\s+([0-9]{1,2}\\.\\d{4})\\s+([+-]\\d+(?:\\.\\d+)?)\\s*\\(([+-]?\\d+(?:\\.\\d+)?)%\\)([\\s\\S]{0,80})');
+  const match=plain.match(rowPattern);
+  if(!match) throw new Error('Npay '+instrumentLabel+' row parse failed');
+
+  const value=Number(match[1]);
+  const changeRaw=Number(match[2]);
+  const changePct=Number(match[3]);
   if(!(value>0 && value<20)) throw new Error('Npay '+instrumentLabel+' invalid yield: '+value);
-  const rest=window.slice(yieldMatch.index+yieldMatch[0].length);
-  const changeMatch=rest.match(/([+-]\d+(?:\.\d+)?)\s*\(([+-]?\d+(?:\.\d+)?)%\)/);
-  const changeValue=changeMatch?Number(changeMatch[1]):null;
-  const changePct=changeMatch?Number(changeMatch[2]):null;
-  const previousClose=Number.isFinite(changeValue)?round(value-changeValue,4):null;
-  const timeMatch=rest.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{1,2}:\d{2})/);
+
+  const previousClose=Number.isFinite(changeRaw)?round(value-changeRaw,4):null;
+  const tail=match[4]||'';
+  const timeMatch=tail.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{1,2}:\d{2})/);
   const asOf=timeMatch?timeMatch[1]+'. '+timeMatch[2]+'. '+timeMatch[3]+' 실시간':new Date().toISOString();
-  return {key,label,name:label,value:round(value,4),previousClose,changeValue:Number.isFinite(changeValue)?round(changeValue*100,1):null,changePct:Number.isFinite(changePct)?round(changePct,2):null,changeUnit:'bp',unit:'percent',asOf,source:'Npay 증권 미국 국채',provider:'Npay 증권',providerPriority:1,priceSession:'INTRADAY',sessionLabel:'실시간'};
+
+  return {
+    key,label,name:label,
+    value:round(value,4),
+    previousClose,
+    changeValue:Number.isFinite(changeRaw)?round(changeRaw*100,1):null,
+    changePct:Number.isFinite(changePct)?round(changePct,2):null,
+    changeUnit:'bp',unit:'percent',asOf,
+    source:'Npay 증권 미국 국채',provider:'Npay 증권',providerPriority:1,
+    priceSession:'INTRADAY',sessionLabel:'실시간'
+  };
 }
 
 async function fetchNpayTreasuryYields() {
@@ -127,4 +137,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: Npay Treasury yields + Cboe VIX fallback.');
+console.log('Patched market.js: exact Npay Treasury row parser + Cboe VIX fallback.');
