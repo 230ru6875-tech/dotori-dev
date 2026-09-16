@@ -17,63 +17,40 @@ function normalizeHtmlText(html='') {
     .trim();
 }
 
-function parseInvestingBondRow(plain, labels, key, label) {
-  const lower=plain.toLowerCase();
-  let pos=-1;
-  let matched='';
-  for (const candidate of labels) {
-    pos=lower.indexOf(String(candidate).toLowerCase());
-    if (pos>=0) { matched=String(candidate); break; }
-  }
-  if (pos<0) throw new Error('Investing.com '+label+' label not found');
-
-  const window=plain.slice(pos+matched.length,pos+matched.length+420);
-  const tokens=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?|\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/g)].map(m=>m[0]);
-  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
-
-  // Investing.com may render the maturity itself as 2.000 / 10.000 / 30.000.
-  // Keep decimal table cells, but explicitly discard any cell numerically equal
-  // to this instrument's maturity before mapping the yield columns.
-  const numeric=tokens
-    .filter(x=>!x.includes(':') && x.includes('.'))
-    .map(x=>x.replaceAll(',',''))
-    .filter(x=>maturity===null || Math.abs(Number(x.replace('%',''))-maturity)>0.0001);
-
-  if (numeric.length<6) throw new Error('Investing.com '+label+' columns not found: '+window.slice(0,220));
-
-  const value=Number(numeric[0].replace('%',''));
-  const previous=Number(numeric[1].replace('%',''));
-  const high=Number(numeric[2].replace('%',''));
-  const low=Number(numeric[3].replace('%',''));
-  const change=Number(numeric[4].replace('%',''));
-  const changePct=Number(numeric[5].replace('%',''));
-
-  if (![value,previous,high,low,change,changePct].every(Number.isFinite)) throw new Error('Investing.com '+label+' numeric parse failed: '+numeric.slice(0,8).join('|'));
-  if (!(value>0 && value<20 && previous>0 && previous<20)) throw new Error('Investing.com '+label+' implausible yield: '+numeric.slice(0,8).join('|'));
-  if (maturity!==null && Math.abs(value-maturity)<0.0001) throw new Error('Investing.com '+label+' maturity misread as yield: '+value);
-  if (Math.abs(value-previous)>2) throw new Error('Investing.com '+label+' current/previous spread implausible: '+value+' vs '+previous);
-
-  const timeMatch=window.match(/\b([01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/);
-  return {key,label,name:label,value:round(value,3),previousClose:round(previous,3),dayHigh:round(high,3),dayLow:round(low,3),changeValue:round(change*100,1),changePct:round(changePct,2),changeUnit:'bp',unit:'percent',asOf:timeMatch?timeMatch[0]:new Date().toISOString(),source:'Investing.com 미국 국채',provider:'Investing.com',providerPriority:1,priceSession:'INTRADAY',sessionLabel:'장중'};
+function parseNpayBondRow(plain, instrumentLabel, key, label) {
+  const pos=plain.indexOf(instrumentLabel);
+  if(pos<0) throw new Error('Npay '+instrumentLabel+' label not found');
+  const window=plain.slice(pos+instrumentLabel.length,pos+instrumentLabel.length+180);
+  const yieldMatch=window.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if(!yieldMatch) throw new Error('Npay '+instrumentLabel+' yield not found: '+window.slice(0,120));
+  const value=Number(yieldMatch[1]);
+  if(!(value>0 && value<20)) throw new Error('Npay '+instrumentLabel+' invalid yield: '+value);
+  const rest=window.slice(yieldMatch.index+yieldMatch[0].length);
+  const changeMatch=rest.match(/([+-]\d+(?:\.\d+)?)\s*\(([+-]?\d+(?:\.\d+)?)%\)/);
+  const changeValue=changeMatch?Number(changeMatch[1]):null;
+  const changePct=changeMatch?Number(changeMatch[2]):null;
+  const previousClose=Number.isFinite(changeValue)?round(value-changeValue,4):null;
+  const timeMatch=rest.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{1,2}:\d{2})/);
+  const asOf=timeMatch?timeMatch[1]+'. '+timeMatch[2]+'. '+timeMatch[3]+' 실시간':new Date().toISOString();
+  return {key,label,name:label,value:round(value,4),previousClose,changeValue:Number.isFinite(changeValue)?round(changeValue*100,1):null,changePct:Number.isFinite(changePct)?round(changePct,2):null,changeUnit:'bp',unit:'percent',asOf,source:'Npay 증권 미국 국채',provider:'Npay 증권',providerPriority:1,priceSession:'INTRADAY',sessionLabel:'실시간'};
 }
 
-async function fetchInvestingTreasuryYields() {
-  const url='https://kr.investing.com/rates-bonds/usa-government-bonds';
+async function fetchNpayTreasuryYields() {
+  const url='https://m.stock.naver.com/marketindex/home/bondAndInterest/bond/USA';
   const response=await fetch(url,{headers:{
     'accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'accept-language':'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     'cache-control':'no-cache',
     'pragma':'no-cache',
-    'referer':'https://kr.investing.com/',
-    'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36'
+    'user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153.0.0.0 Safari/537.36'
   }});
   const html=await response.text();
-  if(!response.ok) throw new Error('Investing.com bonds HTTP '+response.status+' body='+normalizeHtmlText(html).slice(0,180));
+  if(!response.ok) throw new Error('Npay bonds HTTP '+response.status+' body='+normalizeHtmlText(html).slice(0,180));
   const plain=normalizeHtmlText(html);
   return [
-    parseInvestingBondRow(plain,['미국 2년','미국 2년물','U.S. 2Y','US 2Y'],'DGS2','미 2년물'),
-    parseInvestingBondRow(plain,['미국 10년물 국채 금리','미국 10년','U.S. 10Y','US 10Y'],'DGS10','미 10년물'),
-    parseInvestingBondRow(plain,['미국 30년','미국 30년물','U.S. 30Y','US 30Y'],'DGS30','미 30년물')
+    parseNpayBondRow(plain,'미국 국채 2년','DGS2','미 2년물'),
+    parseNpayBondRow(plain,'미국 국채 10년','DGS10','미 10년물'),
+    parseNpayBondRow(plain,'미국 국채 30년','DGS30','미 30년물')
   ];
 }
 
@@ -123,7 +100,7 @@ if(marketStart<0 || errorsStart<0 || errorsStart<=marketStart){
 
 const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(([row])=>row);
   try {
-    const treasury=await fetchInvestingTreasuryYields();
+    const treasury=await fetchNpayTreasuryYields();
     for(const row of treasury){
       const i=market.findIndex(item=>item.key===row.key);
       if(i>=0) market[i]=row; else market.push(row);
@@ -131,7 +108,7 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
   } catch(error) {
     const message=error instanceof Error?error.message:String(error);
     for(const [key,label] of [['DGS2','미 2년물'],['DGS10','미 10년물'],['DGS30','미 30년물']]){
-      const row={key,label,name:label,value:null,changeValue:null,changePct:null,changeUnit:'bp',unit:'percent',source:'Investing.com 미국 국채',provider:'Investing.com',error:message};
+      const row={key,label,name:label,value:null,changeValue:null,changePct:null,changeUnit:'bp',unit:'percent',source:'Npay 증권 미국 국채',provider:'Npay 증권',error:message};
       const i=market.findIndex(item=>item.key===key);
       if(i>=0) market[i]=row; else market.push(row);
     }
@@ -150,4 +127,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: maturity-decimal exclusion + Investing.com Treasury + Cboe VIX fallback.');
+console.log('Patched market.js: Npay Treasury yields + Cboe VIX fallback.');
