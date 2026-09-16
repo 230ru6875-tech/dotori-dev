@@ -7,6 +7,7 @@ on:
     paths:
       - 'strategybar-runtime/**'
       - 'scripts/patch_strategybar_market.mjs'
+      - 'scripts/patch_strategybar_force_cache.mjs'
       - 'scripts/enhance_strategybar_dashboard.mjs'
       - '.github/workflows/strategybar-deploy.yml'
   workflow_dispatch:
@@ -57,6 +58,12 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/patch_strategybar_market.mjs
+
+      - name: Fix force refresh cache semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/patch_strategybar_force_cache.mjs
 
       - name: Enhance responsive market and stock detail cards
         shell: bash
@@ -121,7 +128,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sleep 8
+          sleep 16
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/strategybar-market.json
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=SNDK&force=1&t=$(date +%s)" -o /tmp/strategybar-sndk.json
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=IONQ&force=1&t=$(date +%s)" -o /tmp/strategybar-ionq.json
