@@ -1,0 +1,122 @@
+name: StrategyBar Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'strategybar-runtime/**'
+      - '.github/workflows/strategybar-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategybar-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 6ead7cb11a99b93959c5437fbcd01eb7
+      TARGET_URL: https://strategybar.hnr2020.workers.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Cloudflare token is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+
+      - name: Preserve current single-file dashboard UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p strategybar-runtime/dist
+          curl -fL --retry 4 --retry-delay 2 -A 'Mozilla/5.0 StrategyBarDeploy/1.0' "${TARGET_URL}/?view=1&tab=dashboard" -o strategybar-runtime/dist/index.html
+          test -s strategybar-runtime/dist/index.html
+          BYTES=$(wc -c < strategybar-runtime/dist/index.html)
+          echo "Preserved dashboard bytes: ${BYTES}"
+          test "${BYTES}" -gt 10000
+
+      - name: Resolve existing D1 database binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd strategybar-runtime
+          DB_JSON=$(npx --yes wrangler@4.119.0 d1 list --json)
+          export DB_JSON
+          DB_ID=$(node - <<'NODE'
+          const rows = JSON.parse(process.env.DB_JSON || '[]');
+          const row = rows.find((item) => item.name === 'strategybar');
+          const id = row?.uuid || row?.id;
+          if (!id) process.exit(2);
+          process.stdout.write(String(id));
+          NODE
+          )
+          export DB_ID
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'wrangler.jsonc';
+          const id = process.env.DB_ID;
+          const text = fs.readFileSync(path, 'utf8');
+          fs.writeFileSync(path, text.replace('REPLACE_AFTER_CLOUDFLARE_CONNECTION', id));
+          NODE
+          echo "D1 database binding resolved."
+
+      - name: Deploy StrategyBar worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd strategybar-runtime
+          npx --yes wrangler@4.119.0 deploy --config wrangler.jsonc
+
+      - name: Validate production API
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 8
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/strategybar-market.json
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=SNDK&force=1&t=$(date +%s)" -o /tmp/strategybar-sndk.json
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=IONQ&force=1&t=$(date +%s)" -o /tmp/strategybar-ionq.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const base = JSON.parse(fs.readFileSync('/tmp/strategybar-market.json','utf8'));
+          const sndkDirect = JSON.parse(fs.readFileSync('/tmp/strategybar-sndk.json','utf8'));
+          const ionqDirect = JSON.parse(fs.readFileSync('/tmp/strategybar-ionq.json','utf8'));
+          function check(symbol, direct) {
+            const a = base.symbols?.[symbol];
+            const b = direct.symbols?.[symbol];
+            if (!a || !b) throw new Error(`${symbol} missing`);
+            for (const row of [a,b]) {
+              const price = Number(row.price);
+              const prev = Number(row.previousClose);
+              const pct = Number(row.changePct);
+              if (!(price > 0) || !(prev > 0) || !Number.isFinite(pct)) throw new Error(`${symbol} invalid quote`);
+              const calc = (price / prev - 1) * 100;
+              if (Math.abs(calc - pct) > 0.08) throw new Error(`${symbol} inconsistent changePct: price=${price} prev=${prev} reported=${pct} calc=${calc}`);
+            }
+            if (Number(a.price) !== Number(b.price) || Number(a.previousClose) !== Number(b.previousClose) || Number(a.changePct) !== Number(b.changePct)) {
+              throw new Error(`${symbol} default/direct payload mismatch`);
+            }
+            console.log(`${symbol}: price=${a.price}, previousClose=${a.previousClose}, changePct=${a.changePct}, provider=${a.provider}, session=${a.priceSession}`);
+          }
+          if (!base.ok) throw new Error('market api returned ok=false');
+          check('SNDK', sndkDirect);
+          check('IONQ', ionqDirect);
+          NODE
+
+      - name: Validate dashboard page
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/?view=1&tab=dashboard&t=$(date +%s)" -o /tmp/strategybar-page.html
+          test -s /tmp/strategybar-page.html
+          grep -q '<html' /tmp/strategybar-page.html
+          echo "StrategyBar production page is reachable."
