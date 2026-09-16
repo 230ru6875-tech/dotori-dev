@@ -18,15 +18,18 @@ function normalizeHtmlText(html='') {
 }
 
 function parseNpayBondRow(plain, instrumentLabel, key, label) {
-  const rowPattern=new RegExp(instrumentLabel+'\\s+([0-9]{1,2}\\.\\d{4})\\s+([+-]\\d+(?:\\.\\d+)?)\\s*\\(([+-]?\\d+(?:\\.\\d+)?)%\\)([\\s\\S]{0,80})');
-  const match=plain.match(rowPattern);
-  if(!match) throw new Error('Npay '+instrumentLabel+' row parse failed');
+  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
+  const rowPattern=new RegExp(instrumentLabel+'\\s+([0-9]{1,2}\\.\\d{4})\\s+([+-]\\d+(?:\\.\\d+)?)\\s*\\(([+-]?\\d+(?:\\.\\d+)?)%\\)([\\s\\S]{0,80})','g');
+  const matches=[...plain.matchAll(rowPattern)];
+  const match=matches.find(m=>{
+    const value=Number(m[1]);
+    return value>0 && value<20 && (maturity===null || Math.abs(value-maturity)>0.0001);
+  });
+  if(!match) throw new Error('Npay '+instrumentLabel+' row parse failed; candidates='+matches.map(m=>m[1]).join('|'));
 
   const value=Number(match[1]);
   const changeRaw=Number(match[2]);
   const changePct=Number(match[3]);
-  if(!(value>0 && value<20)) throw new Error('Npay '+instrumentLabel+' invalid yield: '+value);
-
   const previousClose=Number.isFinite(changeRaw)?round(value-changeRaw,4):null;
   const tail=match[4]||'';
   const timeMatch=tail.match(/(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{1,2}:\d{2})/);
@@ -136,4 +139,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: exact Npay Treasury row parser + Cboe VIX fallback.');
+console.log('Patched market.js: Npay Treasury parser ignores maturity-number matches + Cboe VIX fallback.');
