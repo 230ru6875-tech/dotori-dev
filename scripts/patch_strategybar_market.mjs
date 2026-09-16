@@ -27,8 +27,7 @@ function parseInvestingBondRow(plain, labels, key, label) {
   }
   if (pos<0) throw new Error('Investing.com '+label+' label not found');
 
-  // IMPORTANT: start AFTER the maturity label. Starting at `미국 2년` / `미국 10년` /
-  // `미국 30년` makes 2/10/30 look like the yield itself.
+  // Start after the maturity label so 2/10/30 cannot be mistaken for the yield.
   const window=plain.slice(pos+matched.length,pos+matched.length+420);
   const tokens=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?|\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/g)].map(m=>m[0]);
   const numeric=tokens.filter(x=>!x.includes(':')).map(x=>x.replaceAll(',',''));
