@@ -6,6 +6,7 @@ import { createAnalysis, createRuleBasedAnalysis } from "./openai.js";
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...headers}});
 const validSymbol = (value) => typeof value === "string" && /^[A-Z0-9.^=-]{1,15}$/.test(value);
 const now = () => Date.now();
+const CORE_SYMBOLS = ["SNDK", "IONQ"];
 
 async function getCache(env, key) {
   if (!env.DB) return null;
@@ -60,11 +61,39 @@ async function overlayBrokerQuotes(env, snapshot) {
     quoteFeed:{active:applied.length>0,providers,latestAt,staleAfterSeconds:Math.round(Math.max(60000,Number(env.BROKER_QUOTE_MAX_AGE_MS||420000))/1000)},
     sources:[...new Set([...(snapshot.sources||[]),...applied.map((row)=>row.source).filter(Boolean)])]};
 }
+async function ensureCoreSymbols(env, snapshot, force = false) {
+  const missing=CORE_SYMBOLS.filter((symbol)=>!snapshot.symbols?.[symbol]);
+  if (!missing.length) return snapshot;
+  const recovered=await Promise.all(missing.map((symbol)=>getExtra(env,symbol,force).catch(()=>null)));
+  const symbols={...snapshot.symbols};
+  const recoveryErrors=[];
+  missing.forEach((symbol,index)=>{
+    const row=recovered[index]?.symbols?.[symbol];
+    if (row) symbols[symbol]=row;
+    else recoveryErrors.push({symbol,error:"core symbol recovery failed"});
+  });
+  return {...snapshot,symbols,errors:[...(snapshot.errors||[]),...recoveryErrors]};
+}
+
 async function getBaseMarket(env, force = false) {
   const cached=await getCache(env,"market:base"), age=cached?now()-cached.updatedAt:Infinity;
-  if (cached && (age<60000 || (force&&age<15000))) return {...await overlayBrokerQuotes(env,cached.payload),cacheStatus:force&&age<15000?"throttled":"hit"};
-  try { const fresh=await fetchMarketSnapshot(); await putCache(env,"market:base",fresh); return {...await overlayBrokerQuotes(env,fresh),cacheStatus:"refreshed"}; }
-  catch (error) { if (cached) return {...await overlayBrokerQuotes(env,cached.payload),cacheStatus:"stale",warning:error instanceof Error?error.message:"refresh failed"}; throw error; }
+  if (cached && (age<60000 || (force&&age<15000))) {
+    const overlaid=await overlayBrokerQuotes(env,cached.payload);
+    return {...await ensureCoreSymbols(env,overlaid,force),cacheStatus:force&&age<15000?"throttled":"hit"};
+  }
+  try {
+    const fresh=await fetchMarketSnapshot();
+    await putCache(env,"market:base",fresh);
+    const overlaid=await overlayBrokerQuotes(env,fresh);
+    return {...await ensureCoreSymbols(env,overlaid,force),cacheStatus:"refreshed"};
+  }
+  catch (error) {
+    if (cached) {
+      const overlaid=await overlayBrokerQuotes(env,cached.payload);
+      return {...await ensureCoreSymbols(env,overlaid,force),cacheStatus:"stale",warning:error instanceof Error?error.message:"refresh failed"};
+    }
+    throw error;
+  }
 }
 async function getExtra(env, symbol, force = false) {
   const key=`quote:${symbol}`,cached=await getCache(env,key),age=cached?now()-cached.updatedAt:Infinity;
