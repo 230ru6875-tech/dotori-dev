@@ -11,7 +11,7 @@ const injection=String.raw`
 .sb-symbol{font-weight:800;font-size:13px}.sb-pos{color:#ff5876}.sb-neg{color:#4b8fff}.sb-neutral{color:#cbd5e1}.sb-warn{color:#ffbf36}.sb-score{display:inline-block;min-width:24px;padding:2px 5px;border-radius:8px;background:#14283a;color:#dcecff;font-weight:800;text-align:center}.sb-risk{display:inline-block;min-width:24px;padding:2px 5px;border-radius:4px;background:#493b0b;color:#ffd45a;font-weight:800;text-align:center}.sb-signal{display:inline-block;min-width:62px;padding:3px 8px;border-radius:5px;border:1px solid #6c5915;background:#302b0e;color:#ffd54a;font-weight:800;text-align:center}.sb-spark{font-family:monospace;letter-spacing:-2px;font-size:13px}.sb-original-stock-hidden{display:none!important}.sb-original-market-hidden{display:none!important}
 @media(max-width:1100px){#sb-market-pulse-rebuilt{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
-<script id="strategybar-enhancer-script">
+<script id="strategybar-enhancer-script" data-market-label-version="ko-v1">
 (()=>{
 const finite=n=>n!==null&&n!==undefined&&Number.isFinite(Number(n));
 const fmt=(n,d=2)=>finite(n)?Number(n).toLocaleString('ko-KR',{maximumFractionDigits:d,minimumFractionDigits:d}):'확인불가';
@@ -31,7 +31,7 @@ async function enhance(){try{const r=await fetch('/api/market?force=1&t='+Date.n
 const boot=()=>{enhance();setInterval(enhance,60000)};document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
 })();
 </script>`;
-html=html.replace(/\n?<style id="strategybar-enhancer-style">[\s\S]*?<\/style>\s*<script id="strategybar-enhancer-script">[\s\S]*?<\/script>/i,'');
+html=html.replace(/\n?<style id="strategybar-enhancer-style">[\s\S]*?<\/style>\s*<script id="strategybar-enhancer-script"[^>]*>[\s\S]*?<\/script>/i,'');
 html=html.replace(/<\/body>/i,injection+'\n</body>');
 fs.writeFileSync(path,html);
-console.log('Rebuilt market pulse directly from API data with Korean labels and domestic gold.');
+console.log('Applied Korean Market Pulse index labels (ko-v1).');
