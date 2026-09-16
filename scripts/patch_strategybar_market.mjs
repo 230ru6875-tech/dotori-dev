@@ -18,8 +18,7 @@ function normalizeHtmlText(html='') {
 }
 
 function parseNpayBondRow(plain, instrumentLabel, key, label) {
-  const escaped=instrumentLabel.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  const rowPattern=new RegExp(escaped+'\\s+([0-9]{1,2}\\.\\d{4})\\s+([+-]\\d+(?:\\.\\d+)?)\\s*\\(([+-]?\\d+(?:\\.\\d+)?)%\\)([\\s\\S]{0,80})');
+  const rowPattern=new RegExp(instrumentLabel+'\\s+([0-9]{1,2}\\.\\d{4})\\s+([+-]\\d+(?:\\.\\d+)?)\\s*\\(([+-]?\\d+(?:\\.\\d+)?)%\\)([\\s\\S]{0,80})');
   const match=plain.match(rowPattern);
   if(!match) throw new Error('Npay '+instrumentLabel+' row parse failed');
 
