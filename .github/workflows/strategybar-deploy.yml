@@ -55,17 +55,37 @@ jobs:
         run: |
           set -euo pipefail
           cd strategybar-runtime
-          DB_JSON=$(npx --yes wrangler@4.119.0 d1 list --json)
-          export DB_JSON
+          SETTINGS_URL="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/strategybar/settings"
+          HTTP_CODE=$(curl -sS -o /tmp/strategybar-worker-settings.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            "${SETTINGS_URL}")
+          export HTTP_CODE
           DB_ID=$(node - <<'NODE'
+          const fs = require('fs');
+          let body = {};
+          try { body = JSON.parse(fs.readFileSync('/tmp/strategybar-worker-settings.json','utf8')); } catch {}
+          const bindings = body?.result?.bindings || [];
+          const row = bindings.find((item) => item.name === 'DB' && (item.type === 'd1' || item.type === 'd1_database'));
+          const id = row?.id || row?.database_id || row?.namespace_id;
+          if (id) process.stdout.write(String(id));
+          NODE
+          )
+          if [ -z "${DB_ID}" ]; then
+            echo "Worker settings did not expose DB binding (HTTP ${HTTP_CODE}); trying D1 list fallback."
+            DB_JSON=$(npx --yes wrangler@4.119.0 d1 list --json)
+            export DB_JSON
+            DB_ID=$(node - <<'NODE'
           const rows = JSON.parse(process.env.DB_JSON || '[]');
           const row = rows.find((item) => item.name === 'strategybar');
           const id = row?.uuid || row?.id;
           if (!id) process.exit(2);
           process.stdout.write(String(id));
           NODE
-          )
+            )
+          fi
           export DB_ID
+          test -n "${DB_ID}"
           node - <<'NODE'
           const fs = require('fs');
           const path = 'wrangler.jsonc';
@@ -73,7 +93,7 @@ jobs:
           const text = fs.readFileSync(path, 'utf8');
           fs.writeFileSync(path, text.replace('REPLACE_AFTER_CLOUDFLARE_CONNECTION', id));
           NODE
-          echo "D1 database binding resolved."
+          echo "D1 database binding resolved from existing production configuration."
 
       - name: Deploy StrategyBar worker
         shell: bash
