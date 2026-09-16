@@ -59,7 +59,7 @@ jobs:
           echo "Preserved dashboard bytes: ${BYTES}"
           test "${BYTES}" -gt 10000
 
-      - name: Add Investing.com Treasury yields and domestic gold
+      - name: Add Npay Treasury yields and domestic gold
         shell: bash
         run: |
           set -euo pipefail
@@ -208,9 +208,9 @@ jobs:
           for (const key of ['DGS30','DGS10','DGS2']) {
             const row=(base.market||[]).find((item)=>item.key===key);
             if (!row) throw new Error(`${key} market card missing`);
-            if (!(Number(row.value) > 0)) throw new Error(`${key} value invalid: ${row.value}; error=${row.error||''}`);
-            if (String(row.provider||'').toLowerCase() !== 'investing.com') throw new Error(`${key} provider must be Investing.com, got ${row.provider}`);
-            if (!String(row.source||'').includes('Investing.com')) throw new Error(`${key} source must be Investing.com, got ${row.source}`);
+            if (!(Number(row.value) > 0 && Number(row.value) < 20)) throw new Error(`${key} value invalid: ${row.value}; error=${row.error||''}`);
+            if (String(row.provider||'') !== 'Npay 증권') throw new Error(`${key} provider must be Npay 증권, got ${row.provider}`);
+            if (!String(row.source||'').includes('Npay')) throw new Error(`${key} source must be Npay, got ${row.source}`);
             console.log(`${key}: value=${row.value}, previous=${row.previousClose}, change=${row.changeValue}, source=${row.source}, provider=${row.provider}`);
           }
           NODE
