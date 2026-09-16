@@ -1,0 +1,73 @@
+name: AI Control Plane Install
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'ai-control-plane/**'
+      - '.github/workflows/ai-control-plane-install.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ai-control-plane-install
+  cancel-in-progress: false
+
+jobs:
+  install:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install control plane on EC2
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=/opt/ai-workspace
+          sudo mkdir -p "$TARGET"
+          sudo chown -R "$(id -un):$(id -gn)" "$TARGET"
+          rm -rf /tmp/ai-control-plane-install
+          mkdir -p /tmp/ai-control-plane-install
+          unzip -q -o ai-control-plane/ai_control_plane_v1.zip -d /tmp/ai-control-plane-install
+          rsync -a --delete --exclude '.venv/' /tmp/ai-control-plane-install/ai_control_plane_v1/ "$TARGET/"
+          chmod +x "$TARGET/runner/task_runner.py" "$TARGET/scripts/bootstrap_ec2.sh" "$TARGET/scripts/healthcheck.py" "$TARGET/scripts/run_inbox.sh"
+          echo "Installed AI Control Plane to $TARGET"
+
+      - name: Bootstrap Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=/opt/ai-workspace
+          if [ ! -x "$TARGET/.venv/bin/python" ]; then
+            python3 -m venv "$TARGET/.venv"
+          fi
+          "$TARGET/.venv/bin/pip" install -q -U pip
+          "$TARGET/.venv/bin/pip" install -q -r "$TARGET/requirements.txt"
+
+      - name: Run healthcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          AI_WORKSPACE=/opt/ai-workspace /opt/ai-workspace/.venv/bin/python /opt/ai-workspace/scripts/healthcheck.py
+          test -s /opt/ai-workspace/state/health.json
+
+      - name: Validate HamburgerTrader LEVEL 5 policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          p='/opt/ai-workspace/config/policies/hamburgertrader_level5.json'
+          d=json.load(open(p,encoding='utf-8'))
+          assert d['autonomous_level_5'] is True
+          assert 'live_order_submit' in d['allowed']
+          assert d['execution_path']==['MarketData','StrategyEngine','RiskEngine','OrderEngine','BrokerAPI']
+          print('HamburgerTrader LEVEL 5 policy: PASS')
+          PY
+
+      - name: Show installed layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          find /opt/ai-workspace -maxdepth 3 -type f | sort | head -200
