@@ -1,37 +1,49 @@
 import fs from 'node:fs';
+
 const path='strategybar-runtime/dist/index.html';
 let html=fs.readFileSync(path,'utf8');
+
+// Remove every earlier StrategyBar enhancer block so a broken legacy script
+// cannot prevent this minimal label-only patch from running.
+html=html.replace(/\n?<style id="strategybar-enhancer-style">[\s\S]*?<\/style>\s*/gi,'\n');
+html=html.replace(/\n?<script id="strategybar-enhancer-script"[^>]*>[\s\S]*?<\/script>\s*/gi,'\n');
+
 const injection=String.raw`
-<style id="strategybar-enhancer-style">
-#sb-market-pulse-rebuilt{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;width:100%;margin:8px 0 14px}
-#sb-market-pulse-rebuilt .sb-market-card{border:1px solid rgba(148,163,184,.22);border-radius:12px;padding:10px;background:#0b1119;color:#d8e0eb;min-width:0}
-.sb-market-name{font-size:12px;font-weight:800;color:#93a4b8}.sb-market-value{font-size:20px;font-weight:900;margin-top:4px}.sb-market-change{font-size:12px;font-weight:800;margin-top:2px}.sb-market-note{font-size:11px;margin-top:4px;color:#aab6c5}
-.sb-stock-table-wrap{width:100%;overflow:auto;border:1px solid rgba(148,163,184,.18);border-radius:10px;margin-top:8px}
-.sb-stock-table{width:100%;min-width:1080px;border-collapse:collapse;font-size:12px;background:#0b1119;color:#d8e0eb}.sb-stock-table th{position:sticky;top:0;background:#0d1621;color:#8190a4;font-size:11px;font-weight:700;text-align:right;padding:7px 8px;border-bottom:1px solid #243141;white-space:nowrap}.sb-stock-table th:nth-child(1),.sb-stock-table th:nth-child(2){text-align:left}.sb-stock-table td{padding:5px 8px;border-bottom:1px solid rgba(148,163,184,.10);text-align:right;white-space:nowrap;height:28px}.sb-stock-table td:nth-child(1),.sb-stock-table td:nth-child(2){text-align:left}.sb-stock-table tr:hover{background:rgba(59,130,246,.06)}
-.sb-symbol{font-weight:800;font-size:13px}.sb-pos{color:#ff5876}.sb-neg{color:#4b8fff}.sb-neutral{color:#cbd5e1}.sb-warn{color:#ffbf36}.sb-score{display:inline-block;min-width:24px;padding:2px 5px;border-radius:8px;background:#14283a;color:#dcecff;font-weight:800;text-align:center}.sb-risk{display:inline-block;min-width:24px;padding:2px 5px;border-radius:4px;background:#493b0b;color:#ffd45a;font-weight:800;text-align:center}.sb-signal{display:inline-block;min-width:62px;padding:3px 8px;border-radius:5px;border:1px solid #6c5915;background:#302b0e;color:#ffd54a;font-weight:800;text-align:center}.sb-spark{font-family:monospace;letter-spacing:-2px;font-size:13px}.sb-original-stock-hidden{display:none!important}.sb-original-market-hidden{display:none!important}
-@media(max-width:1100px){#sb-market-pulse-rebuilt{grid-template-columns:repeat(2,minmax(0,1fr))}}
-</style>
-<script id="strategybar-enhancer-script" data-market-label-version="ko-v1">
-(()=>{
-const finite=n=>n!==null&&n!==undefined&&Number.isFinite(Number(n));
-const fmt=(n,d=2)=>finite(n)?Number(n).toLocaleString('ko-KR',{maximumFractionDigits:d,minimumFractionDigits:d}):'확인불가';
-const pct=n=>finite(n)?(Number(n)>=0?'+':'')+Number(n).toFixed(2)+'%':'--';
-const cls=n=>!finite(n)?'sb-neutral':Number(n)>0?'sb-pos':Number(n)<0?'sb-neg':'sb-neutral';
-const LABELS={'^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX','DX-Y.NYB':'달러지수 DXY','KRW=X':'원/달러 환율','CL=F':'WTI 국제유가','DGS2':'미 2년물','DGS10':'미 10년물','DGS30':'미 30년물','M04020000':'금 1G 국내시세'};
-const ORDER=['^GSPC','^NDX','^SOX','^RUT','^VIX','DX-Y.NYB','KRW=X','CL=F','DGS2','DGS10','DGS30','M04020000'];
-function vixReading(v){const n=Number(v);if(!finite(n))return'해석 대기';if(n<15)return'안정 · 변동성 낮음';if(n<20)return'보통 · 정상 범위';if(n<25)return'경계 · 변동성 확대';if(n<30)return'위험 확대';return'공포 구간'}
-function findOriginalMarketHost(){const nodes=[...document.querySelectorAll('section,div')].filter(e=>{const t=e.textContent||'';return t.includes('시장 체온')&&(t.includes('^GSPC')||t.includes('S&P 500')||t.includes('나스닥 100'))&&t.length<5000});return nodes.sort((a,b)=>(a.textContent||'').length-(b.textContent||'').length)[0]||null}
-function stockHost(){const labels=['전략 신호','전략신호','RSI','MA20','VWAP'];const nodes=[...document.querySelectorAll('section,div')].filter(e=>{const t=e.textContent||'';return labels.filter(x=>t.includes(x)).length>=3&&t.length>500});return nodes.sort((a,b)=>(a.textContent||'').length-(b.textContent||'').length)[0]||null}
-function renderMarket(data){const market=data.market||[];const byKey=Object.fromEntries(market.map(r=>[r.key,r]));const gold=market.find(r=>r.key==='M04020000'||String(r.name||r.label||'').includes('금 1G')||String(r.name||r.label||'').includes('국내시세'));if(gold&&!byKey.M04020000)byKey.M04020000=gold;const rows=ORDER.map(k=>byKey[k]).filter(Boolean);if(!rows.length)return;let wrap=document.getElementById('sb-market-pulse-rebuilt');if(!wrap){wrap=document.createElement('div');wrap.id='sb-market-pulse-rebuilt';const old=findOriginalMarketHost();if(old){old.parentElement.insertBefore(wrap,old);old.classList.add('sb-original-market-hidden')}else{const sh=stockHost();(sh?.parentElement||document.body).insertBefore(wrap,sh||null)}}wrap.innerHTML=rows.map(row=>{const label=LABELS[row.key]||row.name||row.label||row.key;let value=fmt(row.value,row.key.startsWith('DGS')?3:(row.key==='KRW=X'||row.key==='M04020000'?0:2));if(row.key.startsWith('DGS'))value+='%';else if(row.key==='CL=F')value='$'+value;let change=row.key.startsWith('DGS')?(finite(row.changeValue)?((Number(row.changeValue)>=0?'+':'')+Number(row.changeValue).toFixed(1)+'bp'):'--'):pct(row.changePct);let note=row.key==='^VIX'?vixReading(row.value):(row.provider||row.source||'');return '<div class="sb-market-card" data-key="'+row.key+'"><div class="sb-market-name">'+label+'</div><div class="sb-market-value">'+value+'</div><div class="sb-market-change '+cls(row.key.startsWith('DGS')?row.changeValue:row.changePct)+'">'+change+'</div><div class="sb-market-note">'+note+'</div></div>'}).join('')}
-function spark(row){const up=finite(row.changePct)&&Number(row.changePct)>=0;return '<span class="sb-spark '+(up?'sb-pos':'sb-neg')+'">⌁⌃⌄⌁⌃⌄⌃⌁</span>'}
-function ratio(n){return finite(n)?Number(n).toFixed(2)+'×':'--'}
-function risk(row){let r=50;if(finite(row.rsi)&&row.rsi>70)r+=15;if(finite(row.volatility20)&&row.volatility20>80)r+=15;if(finite(row.ma20Gap)&&row.ma20Gap<-8)r+=10;return Math.max(0,Math.min(99,Math.round(r)))}
-function renderStocks(data){const rows=Object.values(data.symbols||{});if(!rows.length)return;let host=stockHost();if(!host)return;let wrap=document.getElementById('sb-detailed-stock-table');if(!wrap){wrap=document.createElement('div');wrap.id='sb-detailed-stock-table';wrap.className='sb-stock-table-wrap';host.parentElement.insertBefore(wrap,host);host.classList.add('sb-original-stock-hidden')}wrap.innerHTML='<table class="sb-stock-table"><thead><tr><th>비교</th><th>종목</th><th>현재가</th><th>등락</th><th>흐름</th><th>거래량</th><th>RSI</th><th>MA20</th><th>VWAP</th><th>지지선</th><th>위험</th><th>점수 ↓</th><th>전략 신호</th></tr></thead><tbody>'+rows.map(row=>{const score=finite(row.score)?Math.round(row.score):50;const sig=row.signal||'대기';return '<tr data-symbol="'+row.symbol+'"><td>＋</td><td class="sb-symbol">'+row.symbol+'</td><td><b>'+fmt(row.price,2)+'</b></td><td class="'+cls(row.changePct)+'">'+pct(row.changePct)+'</td><td>'+spark(row)+'</td><td>'+ratio(row.volumeRatio)+'</td><td>'+(finite(row.rsi)?Math.round(row.rsi):'--')+'</td><td class="'+cls(row.ma20Gap)+'">'+pct(row.ma20Gap)+'</td><td>'+pct(row.vwapGapPct??0)+'</td><td>'+(finite(row.support)&&finite(row.price)?pct((row.price/row.support-1)*100):'--')+'</td><td><span class="sb-risk">'+risk(row)+'</span></td><td><span class="sb-score">'+score+'</span></td><td><span class="sb-signal">'+sig+'</span></td></tr>'}).join('')+'</tbody></table>'}
-async function enhance(){try{const r=await fetch('/api/market?force=1&t='+Date.now(),{cache:'no-store'});const d=await r.json();renderMarket(d);renderStocks(d)}catch(e){console.error('StrategyBar enhancer failed',e)}}
-const boot=()=>{enhance();setInterval(enhance,60000)};document.readyState==='loading'?document.addEventListener('DOMContentLoaded',boot,{once:true}):boot();
+<script id="strategybar-enhancer-script" data-market-label-version="ko-label-only-v2">
+(function(){
+  var labels={
+    '^GSPC':'S&P 500',
+    '^NDX':'나스닥 100',
+    '^SOX':'필라델피아 반도체',
+    '^RUT':'러셀 2000',
+    '^VIX':'VIX',
+    'DX-Y.NYB':'달러지수 DXY',
+    'KRW=X':'원/달러 환율',
+    'CL=F':'WTI 국제유가'
+  };
+
+  function replaceMarketLabels(){
+    if(!document.body)return;
+    var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    var node;
+    while((node=walker.nextNode())){
+      var raw=node.nodeValue||'';
+      var key=raw.trim();
+      if(Object.prototype.hasOwnProperty.call(labels,key)){
+        node.nodeValue=raw.replace(key,labels[key]);
+      }
+    }
+  }
+
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',replaceMarketLabels,{once:true});
+  }else{
+    replaceMarketLabels();
+  }
+  setInterval(replaceMarketLabels,2000);
 })();
 </script>`;
-html=html.replace(/\n?<style id="strategybar-enhancer-style">[\s\S]*?<\/style>\s*<script id="strategybar-enhancer-script"[^>]*>[\s\S]*?<\/script>/i,'');
+
 html=html.replace(/<\/body>/i,injection+'\n</body>');
 fs.writeFileSync(path,html);
-console.log('Applied Korean Market Pulse index labels (ko-v1).');
+console.log('Applied label-only Korean Market Pulse patch v2.');
