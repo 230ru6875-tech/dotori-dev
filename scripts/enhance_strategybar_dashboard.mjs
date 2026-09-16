@@ -24,14 +24,16 @@ const injection=String.raw`
     return fmt(x,0);
   };
   function findCardForSymbol(symbol){
-    const nodes=[...document.querySelectorAll('div,section,article')].filter(el=>el.children.length && el.textContent?.includes(symbol));
+    const nodes=[...document.querySelectorAll('div,section,article')].filter(el=>el.children.length && el.textContent && el.textContent.includes(symbol));
     return nodes.find(el=>{
       const t=el.textContent||'';
       return t.includes('가격')&&t.includes('RSI')&&t.length<1400;
     })||null;
   }
   function addDetails(card,row){
-    if(!card||card.querySelector('.sb-extra-detail')) return;
+    if(!card) return;
+    const old=card.querySelector('.sb-extra-detail');
+    if(old) old.remove();
     const details=document.createElement('div');
     details.className='sb-extra-detail';
     const fields=[
@@ -72,8 +74,8 @@ const injection=String.raw`
 })();
 </script>`;
 
-if (!html.includes('strategybar-enhancer-script')) {
-  html=html.replace(/<\/body>/i,injection+'\n</body>');
-}
+html=html.replace(/\n?<style id="strategybar-enhancer-style">[\s\S]*?<\/style>\s*<script id="strategybar-enhancer-script">[\s\S]*?<\/script>/i,'');
+html=html.replace(/<\/body>/i,injection+'\n</body>');
+
 fs.writeFileSync(path,html);
-console.log('Injected responsive market and stock detail enhancer.');
+console.log('Replaced responsive market and stock detail enhancer with current version.');
