@@ -7,6 +7,7 @@ const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(
 const validSymbol = (value) => typeof value === "string" && /^[A-Z0-9.^=-]{1,15}$/.test(value);
 const now = () => Date.now();
 const CORE_SYMBOLS = ["SNDK", "IONQ"];
+const finite = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
 
 async function getCache(env, key) {
   if (!env.DB) return null;
@@ -18,6 +19,72 @@ async function putCache(env, key, payload) {
   if (!env.DB) return;
   await env.DB.prepare("INSERT INTO market_cache(cache_key,payload,updated_at) VALUES(?,?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at")
     .bind(key,JSON.stringify(payload),now()).run();
+}
+
+function dig(obj, paths=[]) {
+  for (const path of paths) {
+    let cur=obj;
+    for (const part of path.split('.')) cur=cur?.[part];
+    if (finite(cur)) return Number(cur);
+  }
+  return null;
+}
+function digString(obj, paths=[]) {
+  for (const path of paths) {
+    let cur=obj;
+    for (const part of path.split('.')) cur=cur?.[part];
+    if (typeof cur === 'string' && cur.trim()) return cur.trim();
+  }
+  return null;
+}
+function normalizeProviderQuote(payload, provider, source) {
+  const price=dig(payload,['price','currentPrice','last','lastPrice','close','data.price','data.currentPrice','data.last','data.lastPrice','data.close','output.last','output.stck_prpr']);
+  const previousClose=dig(payload,['previousClose','prevClose','base','data.previousClose','data.prevClose','data.base','output.base','output.stck_sdpr']);
+  if (!finite(price) || Number(price)<=0) return null;
+  const changePct=finite(previousClose)&&Number(previousClose)>0?(Number(price)/Number(previousClose)-1)*100:null;
+  const rawSession=(digString(payload,['priceSession','session','marketSession','data.priceSession','data.session'])||'').toUpperCase();
+  const priceSession=rawSession.includes('PRE')?'PREMARKET':rawSession.includes('POST')||rawSession.includes('AFTER')?'AFTER_HOURS':'REGULAR';
+  const sessionLabel=priceSession==='PREMARKET'?'프리마켓':priceSession==='AFTER_HOURS'?'시간외':'정규장';
+  const asOf=digString(payload,['asOf','timestamp','time','data.asOf','data.timestamp','output.time'])||new Date().toISOString();
+  return {price:Number(price),previousClose:finite(previousClose)?Number(previousClose):null,changePct,priceSession,sessionLabel,asOf,source,provider,providerPriority:provider==='Toss'?1:2};
+}
+
+async function fetchTossQuote(env, symbol) {
+  if (!env.TOSS_QUOTE_URL || !env.TOSS_AUTH_TOKEN) return null;
+  const url=String(env.TOSS_QUOTE_URL).includes('{symbol}')
+    ? String(env.TOSS_QUOTE_URL).replaceAll('{symbol}',encodeURIComponent(symbol))
+    : `${String(env.TOSS_QUOTE_URL).replace(/\/$/,'')}/${encodeURIComponent(symbol)}`;
+  const r=await fetch(url,{headers:{'authorization':`Bearer ${env.TOSS_AUTH_TOKEN}`,'accept':'application/json','user-agent':'StrategyBar/1.0'}});
+  if (!r.ok) throw new Error(`Toss ${symbol} HTTP ${r.status}`);
+  const payload=await r.json();
+  return normalizeProviderQuote(payload,'Toss','Toss Securities');
+}
+
+let kisTokenCache={token:null,expiresAt:0};
+async function getKisToken(env) {
+  if (!env.KIS_APP_KEY || !env.KIS_APP_SECRET) return null;
+  if (kisTokenCache.token && kisTokenCache.expiresAt>Date.now()+60000) return kisTokenCache.token;
+  const base=String(env.KIS_BASE_URL||'https://openapi.koreainvestment.com:9443').replace(/\/$/,'');
+  const r=await fetch(`${base}/oauth2/tokenP`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({grant_type:'client_credentials',appkey:env.KIS_APP_KEY,appsecret:env.KIS_APP_SECRET})});
+  if (!r.ok) throw new Error(`KIS token HTTP ${r.status}`);
+  const p=await r.json();
+  if (!p.access_token) throw new Error('KIS access_token missing');
+  const expiresIn=Math.max(300,Number(p.expires_in||3600));
+  kisTokenCache={token:p.access_token,expiresAt:Date.now()+expiresIn*1000};
+  return p.access_token;
+}
+async function fetchKisQuote(env, symbol) {
+  const token=await getKisToken(env);
+  if (!token) return null;
+  const base=String(env.KIS_BASE_URL||'https://openapi.koreainvestment.com:9443').replace(/\/$/,'');
+  const u=new URL(`${base}/uapi/overseas-price/v1/quotations/price`);
+  u.searchParams.set('AUTH','');u.searchParams.set('EXCD','NAS');u.searchParams.set('SYMB',symbol);
+  const r=await fetch(u.toString(),{headers:{'authorization':`Bearer ${token}`,'appkey':env.KIS_APP_KEY,'appsecret':env.KIS_APP_SECRET,'tr_id':'HHDFS00000300','custtype':'P','accept':'application/json'}});
+  if (!r.ok) throw new Error(`KIS ${symbol} HTTP ${r.status}`);
+  const p=await r.json();
+  const q=normalizeProviderQuote(p,'KIS','Korea Investment Open API');
+  if (!q) return null;
+  return {...q,priceSession:'REGULAR',sessionLabel:'정규장'};
 }
 
 async function readBrokerQuotes(env, symbols) {
@@ -37,12 +104,27 @@ async function readBrokerQuotes(env, symbols) {
   catch { return {}; }
 }
 
+async function overlayAuthenticatedQuotes(env,snapshot){
+  const symbols=Object.keys(snapshot.symbols||{});
+  if(!symbols.length)return snapshot;
+  const next={...snapshot,symbols:{...snapshot.symbols}};
+  const providerErrors=[];
+  await Promise.all(symbols.map(async(symbol)=>{
+    let quote=null;
+    try{quote=await fetchTossQuote(env,symbol);}catch(error){providerErrors.push({symbol,provider:'Toss',error:error instanceof Error?error.message:String(error)});}
+    if(!quote){try{quote=await fetchKisQuote(env,symbol);}catch(error){providerErrors.push({symbol,provider:'KIS',error:error instanceof Error?error.message:String(error)});}}
+    if(quote)next.symbols[symbol]=applyExternalSessionQuote(next.symbols[symbol],quote);
+  }));
+  const providers=[...new Set(Object.values(next.symbols).map(x=>x.provider).filter(x=>x==='Toss'||x==='KIS'))];
+  return {...next,providerErrors,quoteFeed:{...(next.quoteFeed||{}),authenticatedProviders:providers}};
+}
+
 async function overlayBrokerQuotes(env, snapshot) {
   const keys=[...Object.keys(snapshot.symbols||{}),...(snapshot.market||[]).map((row)=>row.key)];
   const quotes=await readBrokerQuotes(env,keys);
   const applied=[];
   const symbols=Object.fromEntries(Object.entries(snapshot.symbols||{}).map(([symbol,row])=>{
-    if (!quotes[symbol]) return [symbol,row];
+    if (!quotes[symbol] || row.provider==='Toss' || row.provider==='KIS') return [symbol,row];
     const next=applyExternalSessionQuote(row,quotes[symbol]);
     if (next!==row) applied.push(next);
     return [symbol,next];
@@ -58,9 +140,11 @@ async function overlayBrokerQuotes(env, snapshot) {
   const providers=[...new Set(applied.map((row)=>row.provider).filter(Boolean))];
   const latestAt=applied.map((row)=>row.asOf).filter(Boolean).sort().at(-1)||null;
   return {...snapshot,symbols,market,session:symbols.SPY?.priceSession||snapshot.session,
-    quoteFeed:{active:applied.length>0,providers,latestAt,staleAfterSeconds:Math.round(Math.max(60000,Number(env.BROKER_QUOTE_MAX_AGE_MS||420000))/1000)},
-    sources:[...new Set([...(snapshot.sources||[]),...applied.map((row)=>row.source).filter(Boolean)])]};
+    quoteFeed:{...(snapshot.quoteFeed||{}),active:applied.length>0||(snapshot.quoteFeed?.authenticatedProviders||[]).length>0,providers:[...new Set([...(snapshot.quoteFeed?.authenticatedProviders||[]),...providers])],latestAt,staleAfterSeconds:Math.round(Math.max(60000,Number(env.BROKER_QUOTE_MAX_AGE_MS||420000))/1000)},
+    sources:[...new Set([...(snapshot.sources||[]),...applied.map((row)=>row.source).filter(Boolean),...Object.values(symbols).map(r=>r.source).filter(Boolean)])]};
 }
+async function applyQuoteLayers(env,snapshot){return overlayBrokerQuotes(env,await overlayAuthenticatedQuotes(env,snapshot));}
+
 async function ensureCoreSymbols(env, snapshot, force = false) {
   const missing=CORE_SYMBOLS.filter((symbol)=>!snapshot.symbols?.[symbol]);
   if (!missing.length) return snapshot;
@@ -78,18 +162,18 @@ async function ensureCoreSymbols(env, snapshot, force = false) {
 async function getBaseMarket(env, force = false) {
   const cached=await getCache(env,"market:base"), age=cached?now()-cached.updatedAt:Infinity;
   if (cached && (age<60000 || (force&&age<15000))) {
-    const overlaid=await overlayBrokerQuotes(env,cached.payload);
+    const overlaid=await applyQuoteLayers(env,cached.payload);
     return {...await ensureCoreSymbols(env,overlaid,force),cacheStatus:force&&age<15000?"throttled":"hit"};
   }
   try {
     const fresh=await fetchMarketSnapshot();
     await putCache(env,"market:base",fresh);
-    const overlaid=await overlayBrokerQuotes(env,fresh);
+    const overlaid=await applyQuoteLayers(env,fresh);
     return {...await ensureCoreSymbols(env,overlaid,force),cacheStatus:"refreshed"};
   }
   catch (error) {
     if (cached) {
-      const overlaid=await overlayBrokerQuotes(env,cached.payload);
+      const overlaid=await applyQuoteLayers(env,cached.payload);
       return {...await ensureCoreSymbols(env,overlaid,force),cacheStatus:"stale",warning:error instanceof Error?error.message:"refresh failed"};
     }
     throw error;
@@ -97,9 +181,9 @@ async function getBaseMarket(env, force = false) {
 }
 async function getExtra(env, symbol, force = false) {
   const key=`quote:${symbol}`,cached=await getCache(env,key),age=cached?now()-cached.updatedAt:Infinity;
-  if (cached && (age<60000 || (force&&age<15000))) return await overlayBrokerQuotes(env,cached.payload);
-  try { const fresh=await fetchMarketSnapshot([],symbol); if (!fresh.ok) throw new Error("종목을 찾지 못했습니다."); await putCache(env,key,fresh); return await overlayBrokerQuotes(env,fresh); }
-  catch (error) { if (cached) return {...await overlayBrokerQuotes(env,cached.payload),cacheStatus:"stale"}; throw error; }
+  if (cached && (age<60000 || (force&&age<15000))) return await applyQuoteLayers(env,cached.payload);
+  try { const fresh=await fetchMarketSnapshot([],symbol); if (!fresh.ok) throw new Error("종목을 찾지 못했습니다."); await putCache(env,key,fresh); return await applyQuoteLayers(env,fresh); }
+  catch (error) { if (cached) return {...await applyQuoteLayers(env,cached.payload),cacheStatus:"stale"}; throw error; }
 }
 
 async function marketRoute(request, env) {
@@ -131,12 +215,12 @@ async function readAnalysis(env, key) {
 async function saveAnalysis(env,key,analysis) {
   if (!env.DB) return;
   await env.DB.prepare("INSERT INTO ai_analysis(analysis_key,payload,generated_at) VALUES(?,?,?) ON CONFLICT(analysis_key) DO UPDATE SET payload=excluded.payload,generated_at=excluded.generated_at")
-    .bind(key,JSON.stringify(analysis),now()).run();
+    .bind(key,JSON.stringify(payload),now()).run();
 }
 async function claimQuota(env) {
   if (!env.DB) return true;
   const day=new Date().toISOString().slice(0,10),limit=Math.max(1,Number(env.AI_DAILY_LIMIT||24));
-  await env.DB.prepare("INSERT OR IGNORE INTO ai_quota(day,used) VALUES(?,0)").bind(day).run();
+  await env.DB.prepare("INSERT OR IGNORE INTO ai_quota(day,used) VALUES(?,0)").bind(day,limit).run();
   const result=await env.DB.prepare("UPDATE ai_quota SET used=used+1 WHERE day=? AND used<?").bind(day,limit).run();
   return Number(result.meta?.changes||0)>0;
 }
@@ -182,7 +266,7 @@ function isUsMarketWindow(date=new Date()) {
 async function scheduledRefresh(env) {
   if (!isUsMarketWindow()) return;
   const baseline=await fetchMarketSnapshot(); await putCache(env,"market:base",baseline);
-  const snapshot=await overlayBrokerQuotes(env,baseline);
+  const snapshot=await applyQuoteLayers(env,baseline);
   if (!env.OPENAI_API_KEY||!await claimQuota(env)) return;
   const input={kind:"market_brief",...compactMarket(snapshot)};
   let analysis;
@@ -193,14 +277,15 @@ async function scheduledRefresh(env) {
 
 function secureAsset(response) {
   const next=new Response(response.body,response); next.headers.set("x-content-type-options","nosniff"); next.headers.set("referrer-policy","strict-origin-when-cross-origin");
-  next.headers.set("permissions-policy","camera=(), microphone=(), geolocation=()"); next.headers.set("x-frame-options","DENY"); next.headers.set("x-robots-tag","noindex, nofollow, noarchive"); return next;
+  next.headers.set("permissions-policy","camera=(), microphone=(), geolocation=()");
+  next.headers.set("x-frame-options","DENY"); next.headers.set("x-robots-tag","noindex, nofollow, noarchive"); return next;
 }
 
 export default {
   async fetch(request,env) {
     const url=new URL(request.url);
     try {
-      if (request.method==="GET"&&url.pathname==="/api/status") return json({ok:true,openAIConfigured:Boolean(env.OPENAI_API_KEY),d1Configured:Boolean(env.DB),marketIngestConfigured:Boolean(env.MARKET_INGEST_SECRET)});
+      if (request.method==="GET"&&url.pathname==="/api/status") return json({ok:true,openAIConfigured:Boolean(env.OPENAI_API_KEY),d1Configured:Boolean(env.DB),marketIngestConfigured:Boolean(env.MARKET_INGEST_SECRET),tossConfigured:Boolean(env.TOSS_QUOTE_URL&&env.TOSS_AUTH_TOKEN),kisConfigured:Boolean(env.KIS_APP_KEY&&env.KIS_APP_SECRET)});
       if (request.method==="GET"&&url.pathname==="/api/live") {
         if (!env.LIVE_QUOTES) return json({ok:false,error:"실시간 시세 채널이 설정되지 않았습니다."},503);
         const id=env.LIVE_QUOTES.idFromName("holdings-live");
