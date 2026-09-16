@@ -41,8 +41,8 @@ async function fetchDomesticGold(){
   const r=await fetch(url,{headers:{'user-agent':'Mozilla/5.0 StrategyBar/1.0','accept':'text/html'}});
   const html=await r.text();
   if(!r.ok)throw new Error('Naver gold HTTP '+r.status);
-  const plain=html.replace(/<script[\\s\\S]*?<\\/script>/gi,' ').replace(/<style[\\s\\S]*?<\\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/,/g,'').replace(/\\s+/g,' ').trim();
-  const candidates=[...plain.matchAll(/([0-9]{5,7}(?:\\.[0-9]+)?)/g)].map(x=>Number(x[1])).filter(x=>x>50000&&x<1000000);
+  const plain=html.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/,/g,'').replace(/\s+/g,' ').trim();
+  const candidates=[...plain.matchAll(/([0-9]{5,7}(?:\.[0-9]+)?)/g)].map(x=>Number(x[1])).filter(x=>x>50000&&x<1000000);
   const value=candidates[0];
   if(!finite(value))throw new Error('Naver gold parse failed');
   return {key:'M04020000',name:'금 1G 국내시세',label:'금 1G 국내시세',value:round(value,0),previousClose:null,changeValue:null,changePct:null,unit:'krw_per_g',asOf:new Date().toISOString(),source:'Naver KRX 금시장',provider:'Naver',providerPriority:1,priceSession:'REGULAR',sessionLabel:'KRX'};
