@@ -20,18 +20,29 @@ function normalizeHtmlText(html='') {
 function parseInvestingBondRow(plain, labels, key, label) {
   const lower=plain.toLowerCase();
   let pos=-1;
+  let matched='';
   for (const candidate of labels) {
     pos=lower.indexOf(String(candidate).toLowerCase());
-    if (pos>=0) break;
+    if (pos>=0) { matched=String(candidate); break; }
   }
   if (pos<0) throw new Error('Investing.com '+label+' label not found');
-  const window=plain.slice(pos,pos+420);
-  const raw=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?/g)].map(m=>m[0]);
-  const values=raw.map(x=>x.replaceAll(',','')).filter(x=>!/^\d{1,2}:\d{2}/.test(x));
-  if (values.length<6) throw new Error('Investing.com '+label+' columns not found: '+window.slice(0,220));
-  const value=Number(values[0]), previous=Number(values[1]), high=Number(values[2]), low=Number(values[3]);
-  const change=Number(values[4].replace('%','')), changePct=Number(values[5].replace('%',''));
-  if (![value,previous,high,low,change,changePct].every(Number.isFinite)) throw new Error('Investing.com '+label+' numeric parse failed: '+values.slice(0,8).join('|'));
+
+  // IMPORTANT: start AFTER the maturity label. Starting at `미국 2년` / `미국 10년` /
+  // `미국 30년` makes 2/10/30 look like the yield itself.
+  const window=plain.slice(pos+matched.length,pos+matched.length+420);
+  const tokens=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?|\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/g)].map(m=>m[0]);
+  const numeric=tokens.filter(x=>!x.includes(':')).map(x=>x.replaceAll(',',''));
+  if (numeric.length<6) throw new Error('Investing.com '+label+' columns not found: '+window.slice(0,220));
+
+  const value=Number(numeric[0].replace('%',''));
+  const previous=Number(numeric[1].replace('%',''));
+  const high=Number(numeric[2].replace('%',''));
+  const low=Number(numeric[3].replace('%',''));
+  const change=Number(numeric[4].replace('%',''));
+  const changePct=Number(numeric[5].replace('%',''));
+  if (![value,previous,high,low,change,changePct].every(Number.isFinite)) throw new Error('Investing.com '+label+' numeric parse failed: '+numeric.slice(0,8).join('|'));
+  if (!(value>0 && value<20 && previous>0 && previous<20)) throw new Error('Investing.com '+label+' implausible yield: '+numeric.slice(0,8).join('|'));
+
   const timeMatch=window.match(/\b([01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/);
   return {key,label,name:label,value:round(value,3),previousClose:round(previous,3),dayHigh:round(high,3),dayLow:round(low,3),changeValue:round(change*100,1),changePct:round(changePct,2),changeUnit:'bp',unit:'percent',asOf:timeMatch?timeMatch[0]:new Date().toISOString(),source:'Investing.com 미국 국채',provider:'Investing.com',providerPriority:1,priceSession:'INTRADAY',sessionLabel:'장중'};
 }
@@ -93,8 +104,6 @@ if(patchStart>=0){
   text=text.replace(snapshotMarker,patchBlock+'\n'+snapshotMarker);
 }
 
-// market.js is intentionally compact/minified. Do not depend on whitespace or on
-// the old VIX implementation between `const market=` and `const errors=`.
 const snapshotStart=text.indexOf(snapshotMarker);
 const marketStart=text.indexOf('const market=macroResults.filter(([row])=>row).map(([row])=>row);',snapshotStart);
 const errorsStart=marketStart>=0?text.indexOf('const errors=',marketStart):-1;
@@ -131,4 +140,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: current-layout anchors + Investing.com Treasury + Cboe VIX fallback.');
+console.log('Patched market.js: maturity-safe Investing.com Treasury parser + Cboe VIX fallback.');
