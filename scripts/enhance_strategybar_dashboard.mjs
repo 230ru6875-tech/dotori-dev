@@ -14,13 +14,13 @@ const injection=String.raw`
 <script id="strategybar-enhancer-script">
 (()=>{
   const fmt=(n,d=2)=>Number.isFinite(Number(n))?Number(n).toLocaleString('ko-KR',{maximumFractionDigits:d}):'--';
-  const pct=(n)=>Number.isFinite(Number(n))?`${Number(n)>=0?'+':''}${Number(n).toFixed(2)}%`:'--';
-  const money=(n)=>Number.isFinite(Number(n))?`$${fmt(n,2)}`:'--';
+  const pct=(n)=>Number.isFinite(Number(n))?(Number(n)>=0?'+':'')+Number(n).toFixed(2)+'%':'--';
+  const money=(n)=>Number.isFinite(Number(n))?'$'+fmt(n,2):'--';
   const compact=(n)=>{
     const x=Number(n); if(!Number.isFinite(x)) return '--';
-    if(Math.abs(x)>=1e9) return `${(x/1e9).toFixed(2)}B`;
-    if(Math.abs(x)>=1e6) return `${(x/1e6).toFixed(2)}M`;
-    if(Math.abs(x)>=1e3) return `${(x/1e3).toFixed(1)}K`;
+    if(Math.abs(x)>=1e9) return (x/1e9).toFixed(2)+'B';
+    if(Math.abs(x)>=1e6) return (x/1e6).toFixed(2)+'M';
+    if(Math.abs(x)>=1e3) return (x/1e3).toFixed(1)+'K';
     return fmt(x,0);
   };
   function findCardForSymbol(symbol){
@@ -39,7 +39,7 @@ const injection=String.raw`
       ['등락률',pct(row.changePct)],['거래량',compact(row.volume ?? row.dailyVolume)],['VWAP',money(row.vwap)],['세션',row.sessionLabel||row.priceSession||'--'],
       ['데이터',row.provider||row.source||'--'],['시각',row.asOf?new Date(row.asOf).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'--']
     ];
-    details.innerHTML=fields.map(([k,v])=>`<div><span class="sb-k">${k}</span><span class="sb-v">${v}</span></div>`).join('');
+    details.innerHTML=fields.map(([k,v])=>'<div><span class="sb-k">'+k+'</span><span class="sb-v">'+v+'</span></div>').join('');
     card.appendChild(details);
   }
   function makeMarketResponsive(){
@@ -57,7 +57,7 @@ const injection=String.raw`
   }
   async function enhance(){
     try{
-      const res=await fetch(`/api/market?force=1&t=${Date.now()}`,{cache:'no-store'});
+      const res=await fetch('/api/market?force=1&t='+Date.now(),{cache:'no-store'});
       const data=await res.json();
       const symbols=data.symbols||{};
       for(const [symbol,row] of Object.entries(symbols)){
@@ -73,7 +73,7 @@ const injection=String.raw`
 </script>`;
 
 if (!html.includes('strategybar-enhancer-script')) {
-  html=html.replace(/<\/body>/i,`${injection}\n</body>`);
+  html=html.replace(/<\/body>/i,injection+'\n</body>');
 }
 fs.writeFileSync(path,html);
 console.log('Injected responsive market and stock detail enhancer.');
