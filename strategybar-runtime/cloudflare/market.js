@@ -8,7 +8,7 @@ export const STOCKS = {
 };
 
 export const MACROS = [
-  ["^GSPC","S&P 500","index"],["^NDX","나스닥 100","index"],["^SOX","필라델피아 반도체","index"],["^RUT","러셀 2000","index"],
+  ["^GSPC","S&P 500","index"],["^NDX","나스닥 100","index"],["^SOX","필라델피아 반도체","index"],["^RUT","러셀 2000","index"],["^VIX","VIX","index"],
   ["DX-Y.NYB","DXY","index"],["KRW=X","USD/KRW","index"],["CL=F","WTI","usd"],
 ];
 
@@ -93,7 +93,8 @@ function volatility(values, period = 20) {
 }
 
 export function calculateSignal({ price, previousClose, closes, highs, lows, volumes }) {
-  const ma20 = sma(closes, 20), ma60 = sma(closes, 60), momentum = rsi(closes), vol = volatility(closes);
+  const ma20 = sma(closes, 20), ma60 = sma(closes, 60), momentum = rsi(closes);
+  const vol = volatility(closes);
   const recentVolumes = volumes.filter(finite).slice(-21), currentVolume = recentVolumes.at(-1);
   const baseVolume = average(recentVolumes.slice(0, -1));
   const volumeRatio = finite(currentVolume) && finite(baseVolume) && baseVolume > 0 ? currentVolume / baseVolume : null;
@@ -121,153 +122,50 @@ export function calculateSignal({ price, previousClose, closes, highs, lows, vol
     trend:finite(ma20)&&finite(ma60)?(price>ma20&&ma20>ma60?"상승":price<ma20&&ma20<ma60?"하락":"혼조"):"확인 중", reasons };
 }
 
-export function parseYahoo(result, symbol) {
-  const meta = result.meta || {}, quote = result.indicators?.quote?.[0] || {};
-  const closes = (quote.close || []).filter(finite).map(Number);
-  const highs = (quote.high || []).filter(finite).map(Number), lows = (quote.low || []).filter(finite).map(Number), volumes = (quote.volume || []).filter(finite).map(Number);
-  const selected = selectYahooSessionQuote(result);
-  const price = Number(selected?.price ?? meta.regularMarketPrice ?? closes.at(-1));
-  const previousClose = Number(meta.regularMarketPreviousClose ?? meta.previousClose ?? closes.at(-2));
-  if (!finite(price) || !closes.length) throw new Error(`No quote for ${symbol}`);
-  const calculated = calculateSignal({ price, previousClose, closes, highs, lows, volumes });
-  const known = STOCKS[symbol];
-  return attachSeries({ symbol, name:known?.[0] || meta.shortName || meta.longName || symbol, shortName:meta.shortName || symbol, category:known?.[1] || "사용자추가",
-    price:round(price), previousClose:round(previousClose), open:round(meta.regularMarketOpen ?? quote.open?.at(-1)), dayHigh:round(meta.regularMarketDayHigh ?? highs.at(-1)),
-    dayLow:round(meta.regularMarketDayLow ?? lows.at(-1)), currency:meta.currency || "USD", exchange:meta.exchangeName || null, marketState:meta.marketState || "CLOSED",
-    priceSession:selected?.priceSession || "REGULAR", sessionLabel:selected?.sessionLabel || "정규장",
-    asOf:new Date((selected?.timestamp || meta.regularMarketTime || result.timestamp?.at(-1) || Date.now()/1000)*1000).toISOString(), asOfLabel:selected?.sessionLabel || "정규장",
-    source:"Yahoo Finance chart", provider:"YAHOO", providerPriority:3, ...calculated }, {closes,highs,lows,volumes});
+async function yahooChart(symbol, range = "6mo", interval = "1d") {
+  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=true&events=div%2Csplits`;
+  const response=await fetch(url,{headers:{"user-agent":"Mozilla/5.0 StrategyBar/1.0","accept":"application/json"}});
+  if(!response.ok) throw new Error(`Yahoo ${symbol} HTTP ${response.status}`);
+  const payload=await response.json();
+  const result=payload?.chart?.result?.[0];
+  if(!result) throw new Error(`Yahoo ${symbol} empty`);
+  return result;
 }
 
-export function applyYahooSessionQuote(row, result) {
-  const selected = selectYahooSessionQuote(result);
-  if (!selected || !finite(selected.price)) return row;
-  const currentTimestamp = Date.parse(row.asOf || "") / 1000;
-  if (finite(currentTimestamp) && selected.timestamp && selected.timestamp < currentTimestamp) return row;
-  const price = Number(selected.price);
-  const series = row._series;
-  const calculated = series ? calculateSignal({price,previousClose:row.previousClose,...series}) : {
-    changePct:finite(row.previousClose)&&Number(row.previousClose)!==0?round((price/Number(row.previousClose)-1)*100):row.changePct,
-  };
-  return attachSeries({...row,price:round(price),marketState:selected.marketState,priceSession:selected.priceSession,sessionLabel:selected.sessionLabel,
-    asOf:new Date((selected.timestamp || Date.now()/1000)*1000).toISOString(),asOfLabel:selected.sessionLabel,
-    source:selected.priceSession === "REGULAR" ? row.source : "Yahoo Finance chart · extended hours",provider:"YAHOO",providerPriority:3,...calculated}, series);
+function quoteFromResult(symbol, result, name, category) {
+  const q=result.indicators?.quote?.[0]||{}, meta=result.meta||{};
+  const closes=(q.close||[]).filter(finite).map(Number), highs=(q.high||[]).filter(finite).map(Number), lows=(q.low||[]).filter(finite).map(Number), volumes=(q.volume||[]).filter(finite).map(Number);
+  const selected=selectYahooSessionQuote(result);
+  const price=selected?.price ?? (finite(meta.regularMarketPrice)?Number(meta.regularMarketPrice):closes.at(-1));
+  const previousClose=finite(meta.chartPreviousClose)?Number(meta.chartPreviousClose):finite(meta.previousClose)?Number(meta.previousClose):closes.at(-2);
+  if(!finite(price)) throw new Error(`${symbol} price missing`);
+  const signal=calculateSignal({price,previousClose,closes,highs,lows,volumes});
+  return attachSeries({symbol,name,category,price:round(price),previousClose:round(previousClose),...signal,open:finite(meta.regularMarketOpen)?round(meta.regularMarketOpen):null,dayHigh:finite(meta.regularMarketDayHigh)?round(meta.regularMarketDayHigh):null,dayLow:finite(meta.regularMarketDayLow)?round(meta.regularMarketDayLow):null,volume:finite(meta.regularMarketVolume)?Number(meta.regularMarketVolume):volumes.at(-1)||null,marketState:selected?.marketState||meta.marketState||null,priceSession:selected?.priceSession||"REGULAR",sessionLabel:selected?.sessionLabel||"정규장",asOf:selected?.timestamp?new Date(selected.timestamp*1000).toISOString():new Date().toISOString(),source:"Yahoo Finance",provider:"Yahoo",providerPriority:3},closes);
 }
 
-export function applyExternalSessionQuote(row, quote) {
-  if (!row || !quote || !finite(quote.price)) return row;
-  const quoteTimestamp = Number.isFinite(Number(quote.timestamp)) ? Number(quote.timestamp) * (Number(quote.timestamp) > 1e12 ? 0.001 : 1) : Date.parse(quote.asOf || "") / 1000;
-  if (!finite(quoteTimestamp)) return row;
-  const currentTimestamp = Date.parse(row.asOf || "") / 1000;
-  if (finite(currentTimestamp) && quoteTimestamp < currentTimestamp - 120) return row;
-  const price = Number(quote.price);
-  const previousClose = finite(quote.previousClose) && Number(quote.previousClose) > 0 ? Number(quote.previousClose) : row.previousClose;
-  const series = row._series;
-  const calculated = series ? calculateSignal({price,previousClose,...series}) : {
-    changePct:finite(previousClose)&&Number(previousClose)!==0?round((price/Number(previousClose)-1)*100):row.changePct,
-  };
-  const priceSession = SESSION_LABELS[quote.priceSession] ? quote.priceSession : "REGULAR";
-  const provider = String(quote.provider || "YAHOO").toUpperCase();
-  return attachSeries({...row,price:round(price),previousClose:finite(previousClose)?round(previousClose):row.previousClose,currency:quote.currency || row.currency,marketState:quote.marketState || priceSession,
-    priceSession,sessionLabel:SESSION_LABELS[priceSession],asOf:new Date(quoteTimestamp*1000).toISOString(),asOfLabel:SESSION_LABELS[priceSession],
-    source:quote.source || provider,provider,providerPriority:Number(quote.providerPriority || 3),...calculated},series);
+function macroFromResult(key, result, name, unit) {
+  const q=result.indicators?.quote?.[0]||{}, meta=result.meta||{};
+  const selected=selectYahooSessionQuote(result);
+  const closes=(q.close||[]).filter(finite).map(Number);
+  const value=selected?.price ?? (finite(meta.regularMarketPrice)?Number(meta.regularMarketPrice):closes.at(-1));
+  const prev=finite(meta.chartPreviousClose)?Number(meta.chartPreviousClose):finite(meta.previousClose)?Number(meta.previousClose):closes.at(-2);
+  return {key,name,unit,value:round(value),previousClose:round(prev),changePct:finite(value)&&finite(prev)&&prev!==0?round((value/prev-1)*100):null,changeValue:finite(value)&&finite(prev)?round(value-prev):null,asOf:selected?.timestamp?new Date(selected.timestamp*1000).toISOString():new Date().toISOString(),source:"Yahoo Finance",provider:"Yahoo",providerPriority:3,priceSession:selected?.priceSession||"REGULAR",sessionLabel:selected?.sessionLabel||"정규장"};
 }
 
-async function fetchYahoo(symbol) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=3mo&interval=1d&includePrePost=true&events=div%2Csplits`;
-  const response = await fetch(url, { headers:{ accept:"application/json", "user-agent":"StrategyBar/1.0" } });
-  if (!response.ok) throw new Error(`Yahoo ${response.status}`);
-  const body = await response.json();
-  const result = body.chart?.result?.[0];
-  if (!result || body.chart?.error) throw new Error(body.chart?.error?.description || `No data for ${symbol}`);
-  return parseYahoo(result, symbol);
+export function applyExternalSessionQuote(row = {}, quote = {}) {
+  if(!finite(quote.price)) return row;
+  const price=Number(quote.price), previousClose=finite(quote.previousClose)?Number(quote.previousClose):row.previousClose;
+  const changePct=finite(previousClose)&&previousClose!==0?(price/previousClose-1)*100:row.changePct;
+  return {...row,price:round(price),previousClose:round(previousClose),changePct:round(changePct),priceSession:quote.priceSession||row.priceSession,sessionLabel:quote.sessionLabel||SESSION_LABELS[quote.priceSession]||row.sessionLabel,asOf:quote.asOf||row.asOf,source:quote.source||row.source,provider:quote.provider||row.provider,providerPriority:quote.providerPriority??row.providerPriority};
 }
 
-const YAHOO_SPARK_BATCH_SIZE = 20;
-
-async function fetchYahooSessionQuoteBatch(symbols, fetchImpl) {
-  const params = new URLSearchParams({symbols:symbols.join(","),range:"1d",interval:"1m",indicators:"close",includeTimestamps:"true",includePrePost:"true"});
-  const response = await fetchImpl(`https://query1.finance.yahoo.com/v7/finance/spark?${params}`, { headers:{accept:"application/json", "user-agent":"StrategyBar/1.0"} });
-  if (!response.ok) throw new Error(`Yahoo Spark ${response.status}`);
-  const body = await response.json();
-  const items = Array.isArray(body.spark?.result) ? body.spark.result : [];
-  return Object.fromEntries(items.map((item)=>{
-    const result = item.response?.[0] || item;
-    const itemSymbol = item.symbol || result.meta?.symbol;
-    return itemSymbol && result ? [itemSymbol,result] : null;
-  }).filter(Boolean));
-}
-
-export async function fetchYahooSessionQuotes(symbols, fetchImpl = fetch) {
-  const unique = [...new Set(symbols.filter(Boolean))];
-  if (!unique.length) return {};
-  const batches = [];
-  for (let index = 0; index < unique.length; index += YAHOO_SPARK_BATCH_SIZE) batches.push(unique.slice(index,index + YAHOO_SPARK_BATCH_SIZE));
-  const settled = await Promise.allSettled(batches.map((batch)=>fetchYahooSessionQuoteBatch(batch,fetchImpl)));
-  const available = settled.filter((item)=>item.status === "fulfilled").map((item)=>item.value);
-  if (!available.length) throw settled.find((item)=>item.status === "rejected")?.reason || new Error("Yahoo Spark unavailable");
-  return Object.assign({},...available);
-}
-
-function stooqSymbol(symbol) {
-  if (!/^[A-Z][A-Z0-9.-]{0,11}$/.test(symbol)) return null;
-  return `${symbol.toLowerCase()}.us`;
-}
-
-async function fetchStooq(symbol) {
-  const mapped = stooqSymbol(symbol);
-  if (!mapped) throw new Error("Stooq mapping unavailable");
-  const end = new Date(), start = new Date(end.getTime() - 120*86400000);
-  const stamp = (date) => date.toISOString().slice(0,10).replaceAll("-","");
-  const response = await fetch(`https://stooq.com/q/d/l/?s=${mapped}&d1=${stamp(start)}&d2=${stamp(end)}&i=d`);
-  if (!response.ok) throw new Error(`Stooq ${response.status}`);
-  const lines = (await response.text()).trim().split(/\r?\n/).slice(1).map((line)=>line.split(",")).filter((row)=>row.length>=6&&finite(row[4]));
-  if (lines.length < 2) throw new Error(`No fallback for ${symbol}`);
-  const closes=lines.map((x)=>Number(x[4])), highs=lines.map((x)=>Number(x[2])), lows=lines.map((x)=>Number(x[3])), volumes=lines.map((x)=>Number(x[5]));
-  const price=closes.at(-1), previousClose=closes.at(-2), calculated=calculateSignal({price,previousClose,closes,highs,lows,volumes});
-  const known=STOCKS[symbol];
-  return attachSeries({symbol,name:known?.[0]||symbol,shortName:symbol,category:known?.[1]||"사용자추가",price:round(price),previousClose:round(previousClose),open:round(Number(lines.at(-1)[1])),
-    dayHigh:round(highs.at(-1)),dayLow:round(lows.at(-1)),currency:"USD",exchange:null,marketState:"CLOSED",priceSession:"REGULAR",sessionLabel:"정규장",
-    asOf:`${lines.at(-1)[0]}T21:00:00.000Z`,asOfLabel:"정규장",source:"Stooq EOD fallback",provider:"STOOQ",providerPriority:4,...calculated},{closes,highs,lows,volumes});
-}
-
-export async function fetchSecurity(symbol) {
-  try { return await fetchYahoo(symbol); }
-  catch (primaryError) {
-    try { return await fetchStooq(symbol); }
-    catch { throw primaryError; }
-  }
-}
-
-async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length); let cursor = 0;
-  async function worker() { while (cursor < items.length) { const index = cursor++; try { results[index] = await fn(items[index]); } catch (error) { results[index] = { symbol:items[index], error:error instanceof Error?error.message:"fetch failed" }; } } }
-  await Promise.all(Array.from({length:Math.min(limit,items.length)},worker));
-  return results;
-}
-
-async function fetchTwoYearYield() {
-  const response = await fetch("https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS2", { headers:{accept:"text/csv"} });
-  if (!response.ok) throw new Error(`FRED ${response.status}`);
-  const rows=(await response.text()).trim().split(/\r?\n/).slice(1).map((line)=>line.split(",")).filter((row)=>finite(row[1]));
-  const current=rows.at(-1), previous=rows.at(-2), value=Number(current[1]), prior=Number(previous[1]);
-  return {key:"DGS2",label:"미 2년물",value:round(value,3),changeValue:round((value-prior)*100,1),changePct:round((value/prior-1)*100,3),changeUnit:"bp",unit:"percent",observationDate:current[0],source:"FRED DGS2"};
-}
-
-export async function fetchMarketSnapshot(extraSymbols = [], only = null) {
-  const requested = only ? [only] : [...new Set([...Object.keys(STOCKS),...MACROS.map(([symbol])=>symbol),...extraSymbols])];
-  let results = await mapLimit(requested, 8, fetchSecurity);
-  try {
-    const sessionQuotes = await fetchYahooSessionQuotes(requested);
-    results = results.map((row)=>row && !row.error && sessionQuotes[row.symbol] ? applyYahooSessionQuote(row,sessionQuotes[row.symbol]) : row);
-  }
-  catch { }
-  const all = Object.fromEntries(results.filter((row)=>row && !row.error).map((row)=>[row.symbol,row]));
-  if (only) return {ok:Boolean(all[only]),asOf:new Date().toISOString(),session:all[only]?.priceSession||"REGULAR",symbols:all,market:[],errors:results.filter((x)=>x?.error)};
-  const symbols=Object.fromEntries(Object.keys(STOCKS).concat(extraSymbols).filter((symbol)=>all[symbol]).map((symbol)=>[symbol,all[symbol]]));
-  const market=MACROS.map(([symbol,label,unit])=>all[symbol]&&({key:symbol,label,value:all[symbol].price,changePct:all[symbol].changePct,changeValue:all[symbol].changePct,changeUnit:"percent",unit,
-    priceSession:all[symbol].priceSession,sessionLabel:all[symbol].sessionLabel,asOf:all[symbol].asOf,source:all[symbol].source,provider:all[symbol].provider,providerPriority:all[symbol].providerPriority})).filter(Boolean);
-  try { market.push(await fetchTwoYearYield()); } catch (error) { market.push({key:"DGS2",label:"미 2년물",value:null,changeValue:null,changePct:null,changeUnit:"bp",unit:"percent",source:"FRED DGS2",error:error instanceof Error?error.message:"unavailable"}); }
-  return {ok:Object.keys(symbols).length>0,asOf:new Date().toISOString(),session:all.SPY?.priceSession||"REGULAR",refreshAfterSeconds:60,symbols,market,
-    sources:["Yahoo Finance chart","FRED DGS2","Stooq EOD fallback"],errors:results.filter((x)=>x?.error)};
+export async function fetchMarketSnapshot(stockEntries = Object.entries(STOCKS), extraSymbol = null) {
+  const stockPairs=[...stockEntries];
+  if(extraSymbol&&!STOCKS[extraSymbol]) stockPairs.push([extraSymbol,[extraSymbol,"사용자 추가"]]);
+  const stockResults=await Promise.all(stockPairs.map(async([symbol,[name,category]])=>{try{return [symbol,quoteFromResult(symbol,await yahooChart(symbol),name,category),null]}catch(error){return [symbol,null,error instanceof Error?error.message:String(error)]}}));
+  const macroResults=await Promise.all(MACROS.map(async([key,name,unit])=>{try{return [macroFromResult(key,await yahooChart(key,"5d","5m"),name,unit),null]}catch(error){return [null,`${name}: ${error instanceof Error?error.message:String(error)}`]}}));
+  const symbols=Object.fromEntries(stockResults.filter(([,row])=>row).map(([symbol,row])=>[symbol,row]));
+  const market=macroResults.filter(([row])=>row).map(([row])=>row);
+  const errors=[...stockResults.filter(([,row,error])=>!row&&error).map(([symbol,,error])=>({symbol,error})),...macroResults.filter(([,error])=>error).map(([,error])=>({symbol:"macro",error}))];
+  return {ok:Object.keys(symbols).length>0,asOf:new Date().toISOString(),session:symbols.SPY?.priceSession||"REGULAR",symbols,market,errors,sources:[...new Set([...Object.values(symbols).map(r=>r.source),...market.map(r=>r.source)].filter(Boolean))]};
 }
