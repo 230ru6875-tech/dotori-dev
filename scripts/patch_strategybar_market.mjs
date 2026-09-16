@@ -29,9 +29,15 @@ function parseInvestingBondRow(plain, labels, key, label) {
 
   const window=plain.slice(pos+matched.length,pos+matched.length+420);
   const tokens=[...window.matchAll(/[+-]?\d+(?:,\d{3})*(?:\.\d+)?%?|\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/g)].map(m=>m[0]);
-  let numeric=tokens.filter(x=>!x.includes(':')).map(x=>x.replaceAll(',',''));
-  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
-  while(numeric.length && maturity!==null && Math.abs(Number(numeric[0].replace('%',''))-maturity)<0.0001){numeric=numeric.slice(1);}
+
+  // Investing.com bond table renders yield columns with decimals (e.g. 4.719, 5.017),
+  // while the maturity embedded in the instrument name is an integer (2/10/30).
+  // Only decimal-valued table cells are eligible for yield data so maturity numbers
+  // can never be mistaken for the current yield.
+  const numeric=tokens
+    .filter(x=>!x.includes(':') && x.includes('.'))
+    .map(x=>x.replaceAll(',',''));
+
   if (numeric.length<6) throw new Error('Investing.com '+label+' columns not found: '+window.slice(0,220));
 
   const value=Number(numeric[0].replace('%',''));
@@ -40,8 +46,12 @@ function parseInvestingBondRow(plain, labels, key, label) {
   const low=Number(numeric[3].replace('%',''));
   const change=Number(numeric[4].replace('%',''));
   const changePct=Number(numeric[5].replace('%',''));
+  const maturity=key==='DGS2'?2:key==='DGS10'?10:key==='DGS30'?30:null;
+
   if (![value,previous,high,low,change,changePct].every(Number.isFinite)) throw new Error('Investing.com '+label+' numeric parse failed: '+numeric.slice(0,8).join('|'));
   if (!(value>0 && value<20 && previous>0 && previous<20)) throw new Error('Investing.com '+label+' implausible yield: '+numeric.slice(0,8).join('|'));
+  if (maturity!==null && Math.abs(value-maturity)<0.0001) throw new Error('Investing.com '+label+' maturity misread as yield: '+value);
+  if (Math.abs(value-previous)>2) throw new Error('Investing.com '+label+' current/previous spread implausible: '+value+' vs '+previous);
 
   const timeMatch=window.match(/\b([01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b/);
   return {key,label,name:label,value:round(value,3),previousClose:round(previous,3),dayHigh:round(high,3),dayLow:round(low,3),changeValue:round(change*100,1),changePct:round(changePct,2),changeUnit:'bp',unit:'percent',asOf:timeMatch?timeMatch[0]:new Date().toISOString(),source:'Investing.com 미국 국채',provider:'Investing.com',providerPriority:1,priceSession:'INTRADAY',sessionLabel:'장중'};
@@ -140,4 +150,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: explicit maturity skip + Investing.com Treasury + Cboe VIX fallback.');
+console.log('Patched market.js: decimal Treasury columns only + Investing.com yields + Cboe VIX fallback.');
