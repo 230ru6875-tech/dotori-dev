@@ -2,6 +2,7 @@ const fs = require('fs');
 const { test, expect } = require('@playwright/test');
 
 const TARGET_URL = 'https://strategybar.hnr2020.workers.dev/?view=1&tab=dashboard';
+const CORE_SYMBOLS = ['SNDK', 'IONQ'];
 const WATCHED_SYMBOLS = ['SNDK', 'IONQ', 'AVGO', 'ORCL'];
 
 function ensureArtifactsDir() {
@@ -37,7 +38,41 @@ function buildSymbolDiagnostics(lines, symbol) {
   return { symbol, found: true, context, ...extractNumberCandidates(context.join(' | ')) };
 }
 
-test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
+function calcChangePct(price, previousClose) {
+  const p = Number(price);
+  const prev = Number(previousClose);
+  if (!Number.isFinite(p) || !Number.isFinite(prev) || prev <= 0) return null;
+  return ((p - prev) / prev) * 100;
+}
+
+function buildPriceIntegrity(item) {
+  if (!item) return { valid: false, reason: 'missing symbol payload' };
+  const price = Number(item.price);
+  const previousClose = Number(item.previousClose);
+  const reportedChangePct = Number(item.changePct);
+  const calculatedChangePct = calcChangePct(price, previousClose);
+  const changePctDelta = Number.isFinite(calculatedChangePct) && Number.isFinite(reportedChangePct)
+    ? Math.abs(calculatedChangePct - reportedChangePct)
+    : null;
+  return {
+    validPrice: Number.isFinite(price) && price > 0,
+    validPreviousClose: Number.isFinite(previousClose) && previousClose > 0,
+    validReportedChangePct: Number.isFinite(reportedChangePct),
+    price,
+    previousClose,
+    reportedChangePct,
+    calculatedChangePct,
+    changePctDelta,
+    internallyConsistent: changePctDelta === null ? null : changePctDelta <= 0.25,
+    provider: item.provider || null,
+    source: item.source || null,
+    priceSession: item.priceSession || null,
+    sessionLabel: item.sessionLabel || null,
+    asOf: item.asOf || null,
+  };
+}
+
+test('StrategyBar SNDK and IONQ core diagnostics on EC2', async ({ page }) => {
   ensureArtifactsDir();
 
   const consoleErrors = [];
@@ -71,19 +106,29 @@ test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
     }
     const market = await getJson(`/api/market?force=1&t=${Date.now()}`);
     const sndkOnly = await getJson(`/api/market?only=SNDK&force=1&t=${Date.now()}`);
-    return { market, sndkOnly };
+    const ionqOnly = await getJson(`/api/market?only=IONQ&force=1&t=${Date.now()}`);
+    return { market, sndkOnly, ionqOnly };
   });
 
   const marketSymbols = Object.keys(apiDiagnostics.market?.body?.symbols || {}).sort();
-  const sndkFromMarket = apiDiagnostics.market?.body?.symbols?.SNDK || null;
-  const sndkFromOnly = apiDiagnostics.sndkOnly?.body?.symbols?.SNDK || null;
+  const corePayloads = {
+    SNDK: {
+      defaultMarket: apiDiagnostics.market?.body?.symbols?.SNDK || null,
+      directMarket: apiDiagnostics.sndkOnly?.body?.symbols?.SNDK || null,
+    },
+    IONQ: {
+      defaultMarket: apiDiagnostics.market?.body?.symbols?.IONQ || null,
+      directMarket: apiDiagnostics.ionqOnly?.body?.symbols?.IONQ || null,
+    },
+  };
 
-  // SNDK is the primary watched symbol and must always be present in both the
-  // normal market payload and the direct-symbol payload.
-  expect(sndkFromMarket, 'SNDK missing from default /api/market response').not.toBeNull();
-  expect(sndkFromOnly, 'SNDK missing from /api/market?only=SNDK response').not.toBeNull();
-  expect(Number(sndkFromOnly.price), 'SNDK price must be a positive number').toBeGreaterThan(0);
-  expect(['PREMARKET', 'REGULAR', 'AFTER_HOURS']).toContain(String(sndkFromOnly.priceSession || 'REGULAR'));
+  for (const symbol of CORE_SYMBOLS) {
+    const payload = corePayloads[symbol];
+    expect(payload.defaultMarket, `${symbol} missing from default /api/market response`).not.toBeNull();
+    expect(payload.directMarket, `${symbol} missing from direct /api/market response`).not.toBeNull();
+    expect(Number(payload.directMarket.price), `${symbol} price must be a positive number`).toBeGreaterThan(0);
+    expect(['PREMARKET', 'REGULAR', 'AFTER_HOURS']).toContain(String(payload.directMarket.priceSession || 'REGULAR'));
+  }
 
   const refreshButton = page.getByRole('button', { name: /갱신|새로고침|refresh/i }).first();
   let refreshButtonFound = false;
@@ -107,9 +152,16 @@ test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
   const visibleSymbols = symbolDiagnostics.filter((item) => item.found).map((item) => item.symbol);
   const missingSymbols = symbolDiagnostics.filter((item) => !item.found).map((item) => item.symbol);
   const suspiciousFound = suspiciousTokens.filter((token) => bodyText.includes(token));
-  const sndkUi = symbolDiagnostics.find((item) => item.symbol === 'SNDK');
 
-  expect(sndkUi?.found, 'SNDK must be visible on the dashboard').toBeTruthy();
+  const coreDiagnostics = {};
+  for (const symbol of CORE_SYMBOLS) {
+    const ui = symbolDiagnostics.find((item) => item.symbol === symbol) || null;
+    const defaultMarket = corePayloads[symbol].defaultMarket;
+    const directMarket = corePayloads[symbol].directMarket;
+    const integrity = buildPriceIntegrity(directMarket || defaultMarket);
+    coreDiagnostics[symbol] = { ui, defaultMarket, directMarket, integrity };
+    expect(ui?.found, `${symbol} must be visible on the dashboard`).toBeTruthy();
+  }
 
   const report = {
     checkedAt: new Date().toISOString(),
@@ -118,7 +170,7 @@ test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
     title: await page.title(),
     httpStatus: response.status(),
     bodyTextLength: bodyText.length,
-    primarySymbol: 'SNDK',
+    coreSymbols: CORE_SYMBOLS,
     visibleSymbols,
     missingSymbols,
     suspiciousFoundBeforeRefresh,
@@ -126,19 +178,7 @@ test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
     refreshButtonFound,
     refreshClickSucceeded,
     symbolDiagnostics,
-    sndk: {
-      ui: sndkUi || null,
-      defaultMarket: sndkFromMarket,
-      directMarket: sndkFromOnly,
-      provider: sndkFromOnly?.provider || sndkFromMarket?.provider || null,
-      source: sndkFromOnly?.source || sndkFromMarket?.source || null,
-      priceSession: sndkFromOnly?.priceSession || sndkFromMarket?.priceSession || null,
-      sessionLabel: sndkFromOnly?.sessionLabel || sndkFromMarket?.sessionLabel || null,
-      price: sndkFromOnly?.price ?? sndkFromMarket?.price ?? null,
-      previousClose: sndkFromOnly?.previousClose ?? sndkFromMarket?.previousClose ?? null,
-      changePct: sndkFromOnly?.changePct ?? sndkFromMarket?.changePct ?? null,
-      asOf: sndkFromOnly?.asOf || sndkFromMarket?.asOf || null,
-    },
+    coreDiagnostics,
     marketApi: {
       status: apiDiagnostics.market?.status,
       ok: apiDiagnostics.market?.ok,
@@ -146,12 +186,21 @@ test('StrategyBar SNDK-first diagnostics on EC2', async ({ page }) => {
       symbols: marketSymbols,
       rawError: apiDiagnostics.market?.error || null,
     },
-    sndkOnlyApi: {
-      status: apiDiagnostics.sndkOnly?.status,
-      ok: apiDiagnostics.sndkOnly?.ok,
-      responseOk: apiDiagnostics.sndkOnly?.body?.ok ?? null,
-      responseError: apiDiagnostics.sndkOnly?.body?.error ?? null,
-      rawError: apiDiagnostics.sndkOnly?.error || null,
+    directApis: {
+      SNDK: {
+        status: apiDiagnostics.sndkOnly?.status,
+        ok: apiDiagnostics.sndkOnly?.ok,
+        responseOk: apiDiagnostics.sndkOnly?.body?.ok ?? null,
+        responseError: apiDiagnostics.sndkOnly?.body?.error ?? null,
+        rawError: apiDiagnostics.sndkOnly?.error || null,
+      },
+      IONQ: {
+        status: apiDiagnostics.ionqOnly?.status,
+        ok: apiDiagnostics.ionqOnly?.ok,
+        responseOk: apiDiagnostics.ionqOnly?.body?.ok ?? null,
+        responseError: apiDiagnostics.ionqOnly?.body?.error ?? null,
+        rawError: apiDiagnostics.ionqOnly?.error || null,
+      },
     },
     consoleErrors,
     pageErrors,
