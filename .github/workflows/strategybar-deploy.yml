@@ -53,7 +53,7 @@ jobs:
           echo "Preserved dashboard bytes: ${BYTES}"
           test "${BYTES}" -gt 10000
 
-      - name: Add Treasury yields and domestic gold
+      - name: Add Investing.com Treasury yields and domestic gold
         shell: bash
         run: |
           set -euo pipefail
@@ -154,10 +154,18 @@ jobs:
           if (!base.ok) throw new Error('market api returned ok=false');
           check('SNDK', sndkDirect);
           check('IONQ', ionqDirect);
-          for (const key of ['DGS30','DGS10','DGS2','M04020000']) {
+
+          const vix=(base.market||[]).find((item)=>item.key==='^VIX' || String(item.name||item.label||'').toUpperCase()==='VIX');
+          if (!vix || !(Number(vix.value) > 0)) throw new Error('VIX market card missing or invalid');
+          console.log(`VIX: value=${vix.value}, source=${vix.source}`);
+
+          for (const key of ['DGS30','DGS10','DGS2']) {
             const row=(base.market||[]).find((item)=>item.key===key);
             if (!row) throw new Error(`${key} market card missing`);
-            console.log(`${key}: value=${row.value}, change=${row.changeValue}, source=${row.source}, error=${row.error||''}`);
+            if (!(Number(row.value) > 0)) throw new Error(`${key} value invalid: ${row.value}; error=${row.error||''}`);
+            if (String(row.provider||'').toLowerCase() !== 'investing.com') throw new Error(`${key} provider must be Investing.com, got ${row.provider}`);
+            if (!String(row.source||'').includes('Investing.com')) throw new Error(`${key} source must be Investing.com, got ${row.source}`);
+            console.log(`${key}: value=${row.value}, previous=${row.previousClose}, change=${row.changeValue}, source=${row.source}, provider=${row.provider}`);
           }
           NODE
 
