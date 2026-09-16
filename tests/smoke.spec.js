@@ -2,9 +2,58 @@ const fs = require('fs');
 const { test, expect } = require('@playwright/test');
 
 const TARGET_URL = 'https://strategybar.hnr2020.workers.dev/?view=1&tab=dashboard';
+const WATCHED_SYMBOLS = ['IONQ', 'SNDK', 'AVGO', 'ORCL', 'QLD'];
 
 function ensureArtifactsDir() {
   fs.mkdirSync('artifacts', { recursive: true });
+}
+
+function normalizeLines(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+function extractNumberCandidates(text) {
+  const priceMatches = [...text.matchAll(/(?:\$|₩)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?|[0-9]+(?:\.[0-9]+)?)/g)]
+    .map((m) => m[0].trim())
+    .filter((value) => !/^20\d{2}$/.test(value.replace(/[^0-9]/g, '')));
+  const percentMatches = [...text.matchAll(/[+-]?\d+(?:\.\d+)?%/g)].map((m) => m[0]);
+  return {
+    priceCandidates: [...new Set(priceMatches)].slice(0, 12),
+    percentCandidates: [...new Set(percentMatches)].slice(0, 8),
+  };
+}
+
+function buildSymbolDiagnostics(lines, symbol) {
+  const indexes = [];
+  lines.forEach((line, index) => {
+    if (line.includes(symbol)) indexes.push(index);
+  });
+
+  if (!indexes.length) {
+    return {
+      symbol,
+      found: false,
+      context: [],
+      priceCandidates: [],
+      percentCandidates: [],
+    };
+  }
+
+  const first = indexes[0];
+  const start = Math.max(0, first - 3);
+  const end = Math.min(lines.length, first + 8);
+  const context = lines.slice(start, end);
+  const candidates = extractNumberCandidates(context.join(' | '));
+
+  return {
+    symbol,
+    found: true,
+    context,
+    ...candidates,
+  };
 }
 
 test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
@@ -27,16 +76,13 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
   expect(response.ok(), `HTTP status was ${response.status()}`).toBeTruthy();
 
   await expect(page.locator('body')).toBeVisible();
-  await page.waitForTimeout(7000);
+  await page.waitForTimeout(8000);
 
-  const bodyText = await page.locator('body').innerText();
+  let bodyText = await page.locator('body').innerText();
   expect(bodyText.trim().length, 'Dashboard body should contain rendered content').toBeGreaterThan(200);
 
-  const watchedSymbols = ['IONQ', 'SNDK', 'AVGO', 'ORCL', 'QLD'];
-  const visibleSymbols = watchedSymbols.filter((symbol) => bodyText.includes(symbol));
-
   const suspiciousTokens = ['NaN', 'undefined', 'null', '가격 오류', '불러오기 실패'];
-  const suspiciousFound = suspiciousTokens.filter((token) => bodyText.includes(token));
+  const suspiciousFoundBeforeRefresh = suspiciousTokens.filter((token) => bodyText.includes(token));
 
   const refreshButton = page.getByRole('button', { name: /갱신|새로고침|refresh/i }).first();
   let refreshButtonFound = false;
@@ -45,11 +91,22 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
   if (await refreshButton.count()) {
     refreshButtonFound = true;
     if (await refreshButton.isVisible()) {
-      await refreshButton.click({ timeout: 10000 }).catch(() => {});
-      await page.waitForTimeout(3000);
-      refreshClickSucceeded = true;
+      try {
+        await refreshButton.click({ timeout: 10000 });
+        refreshClickSucceeded = true;
+        await page.waitForTimeout(5000);
+        bodyText = await page.locator('body').innerText();
+      } catch (error) {
+        console.log(`REFRESH_CLICK_ERROR=${String(error)}`);
+      }
     }
   }
+
+  const lines = normalizeLines(bodyText);
+  const symbolDiagnostics = WATCHED_SYMBOLS.map((symbol) => buildSymbolDiagnostics(lines, symbol));
+  const visibleSymbols = symbolDiagnostics.filter((item) => item.found).map((item) => item.symbol);
+  const missingSymbols = symbolDiagnostics.filter((item) => !item.found).map((item) => item.symbol);
+  const suspiciousFound = suspiciousTokens.filter((token) => bodyText.includes(token));
 
   const report = {
     checkedAt: new Date().toISOString(),
@@ -59,9 +116,12 @@ test('StrategyBar dashboard data checks on EC2', async ({ page }) => {
     httpStatus: response.status(),
     bodyTextLength: bodyText.length,
     visibleSymbols,
+    missingSymbols,
+    suspiciousFoundBeforeRefresh,
     suspiciousFound,
     refreshButtonFound,
     refreshClickSucceeded,
+    symbolDiagnostics,
     consoleErrors,
     pageErrors,
   };
