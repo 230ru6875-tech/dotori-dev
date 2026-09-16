@@ -81,20 +81,26 @@ async function fetchCboeVix() {
 }
 `;
 
-const marker='export async function fetchMarketSnapshot';
-if(!text.includes(marker)) throw new Error('fetchMarketSnapshot marker not found');
+const snapshotMarker='export async function fetchMarketSnapshot';
+if(!text.includes(snapshotMarker)) throw new Error('fetchMarketSnapshot marker not found');
 
 const patchStart=text.indexOf('function normalizeHtmlText(');
 if(patchStart>=0){
-  const patchEnd=text.indexOf(marker,patchStart);
+  const patchEnd=text.indexOf(snapshotMarker,patchStart);
   if(patchEnd<0) throw new Error('existing StrategyBar market patch end not found');
   text=text.slice(0,patchStart)+patchBlock+'\n'+text.slice(patchEnd);
 }else{
-  text=text.replace(marker,patchBlock+'\n'+marker);
+  text=text.replace(snapshotMarker,patchBlock+'\n'+snapshotMarker);
 }
 
-const marketSection=/const market=macroResults\.filter\(\(\[row\]\)=>row\)\.map\(\(\[row\]\)=>row\);[\s\S]*?const errors=/;
-if(!marketSection.test(text)) throw new Error('market result section not found');
+// market.js is intentionally compact/minified. Do not depend on whitespace or on
+// the old VIX implementation between `const market=` and `const errors=`.
+const snapshotStart=text.indexOf(snapshotMarker);
+const marketStart=text.indexOf('const market=macroResults.filter(([row])=>row).map(([row])=>row);',snapshotStart);
+const errorsStart=marketStart>=0?text.indexOf('const errors=',marketStart):-1;
+if(marketStart<0 || errorsStart<0 || errorsStart<=marketStart){
+  throw new Error('current market.js result anchors not found');
+}
 
 const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(([row])=>row);
   try {
@@ -121,8 +127,8 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
       if(vixIndex>=0) market[vixIndex]=row; else market.push(row);
     }
   }
-  const errors=`;
+  `;
 
-text=text.replace(marketSection,replacement);
+text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: Investing.com Treasury rows + Cboe VIX wired into market result path.');
+console.log('Patched market.js: current-layout anchors + Investing.com Treasury + Cboe VIX fallback.');
