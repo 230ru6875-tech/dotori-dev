@@ -24,5 +24,15 @@ if (!changed && !text.includes('if (cached && !force && age<60000)')) {
 text=text.replaceAll('"market:base"','"market:base:v3"');
 text=text.replaceAll('"market:base:v2"','"market:base:v3"');
 
+const brokerGuard='if (!quotes[row.key]) return row;';
+const brokerGuardReplacement="if (!quotes[row.key]) return row;\n    if (['DGS2','DGS10','DGS30'].includes(row.key) && String(row.provider||'')==='Npay 증권') return row;";
+if (text.includes(brokerGuard) && !text.includes("['DGS2','DGS10','DGS30'].includes(row.key)")) {
+  text=text.replace(brokerGuard,brokerGuardReplacement);
+  changed=true;
+}
+if (!text.includes("['DGS2','DGS10','DGS30'].includes(row.key)")) {
+  throw new Error('Treasury broker overlay guard not applied');
+}
+
 fs.writeFileSync(path,text);
-console.log('Patched StrategyBar cache: force=1 always refreshes; base cache key is market:base:v3.');
+console.log('Patched StrategyBar cache and protected Npay Treasury yields from broker quote overlays.');
