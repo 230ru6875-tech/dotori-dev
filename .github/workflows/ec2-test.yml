@@ -17,6 +17,9 @@ jobs:
       - name: Run EC2 healthcheck
         run: bash scripts/healthcheck.sh
 
+      - name: Probe StrategyBar source on EC2
+        run: bash scripts/ec2_strategybar_probe.sh
+
       - name: Install Node dependencies
         run: npm install
 
@@ -31,4 +34,5 @@ jobs:
           path: |
             artifacts/strategybar-dashboard.png
             artifacts/strategybar-report.json
+            artifacts/ec2-strategybar-probe.txt
           if-no-files-found: warn
