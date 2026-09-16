@@ -105,10 +105,18 @@ async function fetchCboeVix() {
   }});
   const html=await response.text();
   if(!response.ok) throw new Error('Cboe VIX HTTP '+response.status);
-  const plain=String(html).replace(/<script[\\s\\S]*?<\\/script>/gi,' ').replace(/<style[\\s\\S]*?<\\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\\s+/g,' ').trim();
-  const spot=plain.match(/\\$\\s*([0-9]+(?:\\.[0-9]+)?)\\s*VIX\\s*Spot\\s*Price/i)
-    || plain.match(/VIX\\s*Spot\\s*Price\\s*\\$?\\s*([0-9]+(?:\\.[0-9]+)?)/i)
-    || plain.match(/Trade\\s*Data[\\s\\S]{0,180}?\\$\\s*([0-9]+(?:\\.[0-9]+)?)/i);
+  const scriptRe=new RegExp('<script[\\s\\S]*?<\\/script>','gi');
+  const styleRe=new RegExp('<style[\\s\\S]*?<\\/style>','gi');
+  const tagRe=new RegExp('<[^>]+>','g');
+  const spaceRe=new RegExp('\\s+','g');
+  const plain=String(html).replace(scriptRe,' ').replace(styleRe,' ').replace(tagRe,' ').replace(spaceRe,' ').trim();
+  const patterns=[
+    new RegExp('\\$\\s*([0-9]+(?:\\.[0-9]+)?)\\s*VIX\\s*Spot\\s*Price','i'),
+    new RegExp('VIX\\s*Spot\\s*Price\\s*\\$?\\s*([0-9]+(?:\\.[0-9]+)?)','i'),
+    new RegExp('Trade\\s*Data[\\s\\S]{0,180}?\\$\\s*([0-9]+(?:\\.[0-9]+)?)','i')
+  ];
+  let spot=null;
+  for(const pattern of patterns){spot=plain.match(pattern);if(spot)break;}
   if(!spot) throw new Error('Cboe VIX spot parse failed');
   const value=Number(spot[1]);
   if(!(value>5&&value<100)) throw new Error('Cboe VIX invalid value '+value);
