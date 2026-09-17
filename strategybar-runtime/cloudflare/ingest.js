@@ -1,7 +1,8 @@
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CLOCK_SKEW_SECONDS = 300;
-const PROVIDER_PROTECT_MS = { ALPACA: 15000, TOSS: 15000, KIS: 30000, YAHOO: 0 };
-const PROVIDER_PRIORITY = { ALPACA: 1, TOSS: 2, KIS: 3, YAHOO: 4 };
+const PROVIDER_PROTECT_MS = { KIS: 15000, ALPACA: 10000, NAMUH: 60000, TOSS: 0, YAHOO: 0 };
+const PROVIDER_PRIORITY = { KIS: 1, ALPACA: 2, NAMUH: 3, YAHOO: 4, TOSS: 5 };
+const MAX_HIGHER_PRIORITY_LAG_MS = 5000;
 const SESSION_LABELS = { PREMARKET: "프리마켓", REGULAR: "정규장", AFTER_HOURS: "시간외" };
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), {
@@ -117,9 +118,15 @@ export async function handleMarketIngest(request, env) {
     const protectMs=PROVIDER_PROTECT_MS[currentProvider]||0;
     const currentFresh=receivedAt-Number(current.received_at||0) <= protectMs;
     const lowerPriority=incomingPriority>currentPriority;
+    const higherPriority=incomingPriority<currentPriority;
     const olderSameProvider=incomingPriority===currentPriority && incomingQuoteTime<currentQuoteTime;
-    if ((lowerPriority&&currentFresh)||olderSameProvider) {
-      suppressed.push({symbol:quote.symbol,incoming:quote.provider,kept:currentProvider,reason:lowerPriority?"higher-priority-live-fresh":"older-quote"});
+    const higherPriorityButTooOld=higherPriority && currentQuoteTime>0 && incomingQuoteTime+MAX_HIGHER_PRIORITY_LAG_MS<currentQuoteTime;
+    const lowerPriorityMuchNewer=lowerPriority && currentQuoteTime>0 && incomingQuoteTime>currentQuoteTime+MAX_HIGHER_PRIORITY_LAG_MS;
+    if (olderSameProvider || higherPriorityButTooOld || (lowerPriority&&currentFresh&&!lowerPriorityMuchNewer)) {
+      suppressed.push({
+        symbol:quote.symbol,incoming:quote.provider,kept:currentProvider,
+        reason:olderSameProvider?"older-quote":higherPriorityButTooOld?"higher-priority-stale":"higher-priority-live-fresh"
+      });
       continue;
     }
     accepted.push(quote);
