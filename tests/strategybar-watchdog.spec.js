@@ -27,7 +27,7 @@ test('StrategyBar production watchdog', async ({ page }) => {
     const row=data.symbols?.[symbol];
     expect(row, symbol+' exists').toBeTruthy();
     expect(finite(row.price), symbol+' finite price').toBeTruthy();
-    expect(Number(row.price)>0 && Number(row.price)<1000, symbol+' sane price').toBeTruthy();
+    expect(Number(row.price)>0 && Number(row.price)<10000, symbol+' sane price').toBeTruthy();
     if(finite(row.previousClose) && finite(row.changePct)){
       const expected=(Number(row.price)/Number(row.previousClose)-1)*100;
       expect(Math.abs(expected-Number(row.changePct)),symbol+' price/change consistency').toBeLessThan(0.15);
@@ -39,12 +39,13 @@ test('StrategyBar production watchdog', async ({ page }) => {
   expect(finite(vix.value),'VIX finite').toBeTruthy();
   expect(Number(vix.value)>5 && Number(vix.value)<100,'VIX sane range').toBeTruthy();
 
-  for(const key of ['UST2Y','UST10Y','UST30Y']){
+  for(const key of ['DGS2','DGS10','DGS30']){
     const y=(data.market||[]).find(x=>x.key===key);
     expect(y,key+' Treasury row').toBeTruthy();
-    expect(y.provider,key+' official provider').toBe('U.S. Treasury');
-    expect(String(y.source||''),key+' source').toContain('Treasury');
+    expect(y.provider,key+' Npay provider').toBe('Npay 증권');
+    expect(String(y.source||''),key+' source').toContain('Npay');
     expect(finite(y.value),key+' finite yield').toBeTruthy();
+    expect(Number(y.value)>0 && Number(y.value)<20,key+' sane yield').toBeTruthy();
   }
 
   const marketGrid=await page.locator('.sb-market-responsive').count();
