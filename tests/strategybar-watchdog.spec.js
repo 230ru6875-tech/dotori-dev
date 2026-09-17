@@ -34,13 +34,16 @@ test('StrategyBar production watchdog', async ({ page }) => {
     }
   }
 
-  const vix=(data.market||[]).find(x=>x.key==='^VIX'||String(x.name||'').toUpperCase().includes('VIX'));
+  const market=data.market||[];
+  const vix=market.find(x=>x.key==='^VIX'||String(x.name||'').toUpperCase().includes('VIX'));
   expect(vix,'VIX market row').toBeTruthy();
   expect(finite(vix.value),'VIX finite').toBeTruthy();
   expect(Number(vix.value)>5 && Number(vix.value)<100,'VIX sane range').toBeTruthy();
 
+  const treasuryRows={};
   for(const key of ['DGS2','DGS10','DGS30']){
-    const y=(data.market||[]).find(x=>x.key===key);
+    const y=market.find(x=>x.key===key);
+    treasuryRows[key]=y;
     expect(y,key+' Treasury row').toBeTruthy();
     expect(y.provider,key+' Npay provider').toBe('Npay 증권');
     expect(String(y.source||''),key+' source').toContain('Npay');
@@ -48,12 +51,23 @@ test('StrategyBar production watchdog', async ({ page }) => {
     expect(Number(y.value)>0 && Number(y.value)<20,key+' sane yield').toBeTruthy();
   }
 
-  const marketGrid=await page.locator('.sb-market-responsive').count();
-  expect(marketGrid,'Market Pulse card grid').toBeGreaterThan(0);
-  const stockRows=await page.locator('.sb-stock-row').count();
-  expect(stockRows,'stock row layout').toBeGreaterThanOrEqual(2);
-  const vixReading=await page.locator('.sb-vix-reading').count();
-  expect(vixReading,'VIX interpretation').toBeGreaterThan(0);
+  // Validate the actual user-visible Market Pulse instead of implementation CSS.
+  await expect(page.getByRole('heading',{name:'시장 체온',exact:true}),'Market Pulse heading').toBeVisible();
+  const requiredLabels=['S&P 500','나스닥 100','필라델피아 반도체','러셀 2000','VIX','달러지수 DXY','원/달러 환율','WTI 국제유가','금 1G 국내시세','미 2년물','미 10년물','미 30년물'];
+  for(const label of requiredLabels){
+    await expect(page.getByText(label,{exact:true}).first(),label+' visible').toBeVisible();
+  }
+
+  const visibleText=await page.locator('body').innerText();
+  expect(visibleText,'VIX value visible').toContain(Number(vix.value).toFixed(2));
+  expect(visibleText,'2Y yield visible').toContain(Number(treasuryRows.DGS2.value).toFixed(3)+'%');
+  expect(visibleText,'10Y yield visible').toContain(Number(treasuryRows.DGS10.value).toFixed(3)+'%');
+  expect(visibleText,'30Y yield visible').toContain(Number(treasuryRows.DGS30.value).toFixed(3)+'%');
+  expect(visibleText,'VIX interpretation visible').toMatch(/불안 완화|보통|긴장|공포/);
+
+  await expect(page.getByText('샌디스크',{exact:true}).first(),'SNDK stock row visible').toBeVisible();
+  await expect(page.getByText('아이온큐',{exact:true}).first(),'IONQ stock row visible').toBeVisible();
+  await expect(page.getByRole('button',{name:/지금 갱신/}),'refresh button visible').toBeVisible();
 
   expect(pageErrors,'page JavaScript errors: '+pageErrors.join(' | ')).toEqual([]);
   const fatalConsole=consoleErrors.filter(x=>/SyntaxError|ReferenceError|TypeError|Uncaught/i.test(x));
