@@ -17,7 +17,7 @@ for (const [from,to] of replacements) {
 }
 if (!changed && !text.includes('if (cached && !force && age<60000)')) throw new Error('StrategyBar cache condition not found');
 
-for (const oldKey of ['"market:base"','"market:base:v2"','"market:base:v3"','"market:base:v4"','"market:base:v5"']) text=text.replaceAll(oldKey,'"market:base:v6"');
+for (const oldKey of ['"market:base"','"market:base:v2"','"market:base:v3"','"market:base:v4"','"market:base:v5"','"market:base:v6"']) text=text.replaceAll(oldKey,'"market:base:v7"');
 
 const brokerGuard='if (!quotes[row.key]) return row;';
 const brokerGuardReplacement="if (!quotes[row.key]) return row;\n    if (['DGS2','DGS10','DGS30'].includes(row.key) && String(row.provider||'')==='Npay 증권') return row;";
@@ -28,8 +28,6 @@ fs.writeFileSync(indexPath,text);
 const marketPath='strategybar-runtime/cloudflare/market.js';
 let market=fs.readFileSync(marketPath,'utf8');
 
-// Macro indices must survive an intraday Yahoo failure. Fall back to daily data
-// instead of dropping the entire row from the market array.
 const macroRe=/const macroResults=await Promise\.all\(MACROS\.map\(async\(\[key,name,unit\]\)=>\{try\{return\[macroFromResult\(key,await yahooChart\(key,["']5d["'],["']5m["']\),name,unit\),null\]\}catch\(error\)\{return\[null,`\$\{name\}: \$\{error instanceof Error\?error\.message:String\(error\)\}`\]\}\}\)\);/;
 const macroReplacement=String.raw`const macroResults=await Promise.all(MACROS.map(async([key,name,unit])=>{
   let firstError=null;
@@ -44,6 +42,59 @@ const macroReplacement=String.raw`const macroResults=await Promise.all(MACROS.ma
 }));`;
 if(macroRe.test(market)) market=market.replace(macroRe,macroReplacement);
 else if(!market.includes("for(const [range,interval] of [['5d','5m'],['1mo','1d']])")) throw new Error('macroResults fallback anchor not found');
+
+function parseCboeCsv(csv){
+  const points=[];
+  for(const line of String(csv||'').trim().split(/\r?\n/).slice(1)){
+    const cols=line.split(',').map(x=>String(x||'').replace(/^"|"$/g,'').trim());
+    if(cols.length<5)continue;
+    const date=cols[0],value=Number(cols[4]);
+    if(date&&Number.isFinite(value)&&value>5&&value<100)points.push({date,value});
+  }
+  return points;
+}
+
+async function fetchBuildVixFallback(){
+  const headers={'user-agent':'Mozilla/5.0 StrategyBarDeploy/1.0','accept':'text/csv,application/json,text/plain,*/*','cache-control':'no-cache'};
+  try{
+    const r=await fetch('https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv',{headers});
+    if(r.ok){
+      const points=parseCboeCsv(await r.text());
+      if(points.length){
+        const latest=points.at(-1),prev=points.length>1?points.at(-2):null;
+        const row={key:'^VIX',label:'VIX',name:'VIX',unit:'index',value:Number(latest.value.toFixed(2)),previousClose:prev?Number(prev.value.toFixed(2)):null,changeValue:prev?Number((latest.value-prev.value).toFixed(2)):null,changePct:prev&&prev.value?Number(((latest.value/prev.value-1)*100).toFixed(2)):null,asOf:latest.date,source:'Cboe VIX daily history CSV (build fallback)',provider:'Cboe',providerPriority:9,priceSession:'DAILY_CLOSE',sessionLabel:'Cboe 종가'};
+        console.log('Build VIX fallback from Cboe: '+row.value+' asOf='+row.asOf);
+        return row;
+      }
+    }
+  }catch(error){console.log('Cboe build VIX preflight failed: '+(error instanceof Error?error.message:String(error)));}
+
+  for(const host of ['query1.finance.yahoo.com','query2.finance.yahoo.com']){
+    try{
+      const url='https://'+host+'/v8/finance/chart/%5EVIX?range=1mo&interval=1d&includePrePost=true';
+      const r=await fetch(url,{headers:{'user-agent':'Mozilla/5.0 StrategyBarDeploy/1.0','accept':'application/json','cache-control':'no-cache'}});
+      if(!r.ok)continue;
+      const p=await r.json(),result=p&&p.chart&&p.chart.result&&p.chart.result[0];
+      const closes=(result&&result.indicators&&result.indicators.quote&&result.indicators.quote[0]&&result.indicators.quote[0].close)||[];
+      const times=(result&&result.timestamp)||[];
+      const pts=[];
+      for(let i=0;i<Math.min(closes.length,times.length);i++){
+        const value=Number(closes[i]),ts=Number(times[i]);
+        if(Number.isFinite(value)&&value>5&&value<100&&Number.isFinite(ts))pts.push({value,ts});
+      }
+      if(pts.length){
+        const latest=pts.at(-1),prev=pts.length>1?pts.at(-2):null;
+        const row={key:'^VIX',label:'VIX',name:'VIX',unit:'index',value:Number(latest.value.toFixed(2)),previousClose:prev?Number(prev.value.toFixed(2)):null,changeValue:prev?Number((latest.value-prev.value).toFixed(2)):null,changePct:prev&&prev.value?Number(((latest.value/prev.value-1)*100).toFixed(2)):null,asOf:new Date(latest.ts*1000).toISOString(),source:'Yahoo Finance VIX daily (build fallback)',provider:'Yahoo',providerPriority:9,priceSession:'DAILY_CLOSE',sessionLabel:'전일 종가'};
+        console.log('Build VIX fallback from Yahoo: '+row.value+' asOf='+row.asOf);
+        return row;
+      }
+    }catch(error){console.log(host+' build VIX preflight failed: '+(error instanceof Error?error.message:String(error)));}
+  }
+  throw new Error('Build VIX preflight failed for Cboe and Yahoo');
+}
+
+const buildVixFallback=await fetchBuildVixFallback();
+const buildVixLiteral=JSON.stringify(buildVixFallback);
 
 const start=market.indexOf('async function resilientVix(){');
 const end=market.indexOf('export async function fetchMarketSnapshot',start);
@@ -69,9 +120,9 @@ const resilient=`async function resilientVix(){
     if(r.ok){
       const csv=await r.text(),lines=csv.trim().split(/\\r?\\n/).slice(1),points=[];
       for(const line of lines){
-        const cols=line.split(',');
+        const cols=line.split(',').map(x=>String(x||'').replace(/^\"|\"$/g,'').trim());
         if(cols.length<5)continue;
-        const date=String(cols[0]||'').trim(),value=Number(String(cols[4]||'').replace(/\"/g,'').trim());
+        const date=cols[0],value=Number(cols[4]);
         if(date&&Number.isFinite(value)&&value>5&&value<100)points.push({date,value});
       }
       if(points.length){
@@ -80,11 +131,11 @@ const resilient=`async function resilientVix(){
       }
     }
   }catch{}
-  throw new Error('VIX Yahoo and Cboe CSV providers unavailable');
+  return ${buildVixLiteral};
 }
 `;
 market=market.slice(0,start)+resilient+market.slice(end);
 fs.writeFileSync(marketPath,market);
 
 for (const file of [marketPath,indexPath]) execFileSync(process.execPath,['--check',file],{stdio:'inherit'});
-console.log('Patched StrategyBar cache v6, macro daily fallback, Npay Treasury protection, Cboe VIX CSV fallback, and syntax checks.');
+console.log('Patched StrategyBar cache v7, macro fallback, protected Npay yields, and guaranteed build-time VIX fallback.');
