@@ -24,7 +24,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v2">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v3">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -32,6 +32,7 @@ const injection=String.raw`
     'DGS2':'미 2년물','DGS10':'미 10년물','DGS30':'미 30년물','M04020000':'금 1G 국내시세'
   };
   var order=['^GSPC','^NDX','^SOX','^RUT','^VIX','DX-Y.NYB','KRW=X','CL=F','DGS2','DGS10','DGS30','M04020000'];
+  var LIVE_FRESH_MS=15000;
   var liveState={socket:null,retry:1000,timer:null,ping:null,symbols:[],lastMessage:0,liveSeen:{}};
   function finite(v){return v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));}
   function valueText(row){
@@ -98,17 +99,19 @@ const injection=String.raw`
     [].slice.call(host.querySelectorAll('*')).forEach(function(el){
       if(el.childElementCount)return;
       var text=(el.textContent||'').trim();
-      if(/^(Yahoo|YAHOO|Yahoo Finance)$/i.test(text))el.textContent=provider;
+      if(/^(Yahoo|YAHOO|Yahoo Finance|NAMUH)$/i.test(text))el.textContent=provider;
     });
   }
   function applyQuote(q){
     var symbol=String(q&&q.symbol||'').toUpperCase();if(!symbol)return;
     var provider=String(q&&q.provider||'').toUpperCase();
     var isLive=provider && provider!=='YAHOO';
-    if(isLive)liveState.liveSeen[symbol]=Date.now();
-    if(!isLive && liveState.liveSeen[symbol] && Date.now()-liveState.liveSeen[symbol]<180000)return;
+    var quoteTime=q&&q.asOf?Date.parse(q.asOf):NaN;
+    var seenAt=Number.isFinite(quoteTime)?quoteTime:Date.now();
+    if(isLive)liveState.liveSeen[symbol]=Math.max(Date.now(),seenAt);
+    if(!isLive && liveState.liveSeen[symbol] && Date.now()-liveState.liveSeen[symbol]<LIVE_FRESH_MS)return;
     var host=findCardForSymbol(symbol);if(!host)return;
-    if(isLive)replaceProviderLabel(host,q.provider||provider);
+    replaceProviderLabel(host,isLive?(q.provider||provider):'Yahoo');
     var box=host.querySelector('.sb-live-quote');
     if(!box){
       box=document.createElement('div');box.className='sb-live-quote';
@@ -120,7 +123,7 @@ const injection=String.raw`
     var pct=finite(q.changePct)?Number(q.changePct):(finite(q.price)&&finite(q.previousClose)?(Number(q.price)/Number(q.previousClose)-1)*100:null);
     change.textContent=quoteChangeText(q);change.className='sb-live-change '+(Number.isFinite(pct)?(pct>0?'up':pct<0?'down':''):'');
     var tm=q.asOf?new Date(q.asOf).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'';
-    meta.textContent=[q.sessionLabel||q.priceSession||'',q.provider||'',tm].filter(Boolean).join(' · ');
+    meta.textContent=[q.sessionLabel||q.priceSession||'',isLive?(q.provider||provider):'Yahoo',tm].filter(Boolean).join(' · ');
     box.classList.remove('flash');void box.offsetWidth;box.classList.add('flash');
   }
   function handleLiveMessage(event){
@@ -152,7 +155,7 @@ const injection=String.raw`
       if(!r.ok)return;
       var data=await r.json(),rows=Array.isArray(data.market)?data.market:[],byKey={};
       rows.forEach(function(x){if(x&&x.key)byKey[x.key]=x;});
-      if(grid){grid.classList.add('sb-market-repaired');grid.replaceChildren();order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});}
+      if(grid){grid.classList.add('sb-market-repaired');grid.replaceChildren();order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});
       var symbols=Object.keys(data.symbols||{});symbols.forEach(function(s){applyQuote(data.symbols[s]);});
       if(!liveState.socket||liveState.socket.readyState>1){connectLive(symbols);}
       else if(symbols.join(',')!==liveState.symbols.join(',')){liveState.symbols=symbols.slice(0,50);try{liveState.socket.send(JSON.stringify({type:'subscribe',symbols:liveState.symbols}));}catch(e){}}
@@ -188,4 +191,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v2.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v3.');
