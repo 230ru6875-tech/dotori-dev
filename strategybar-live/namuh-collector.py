@@ -13,8 +13,9 @@ from nhplug.realtime import subscribe
 
 TARGET_URL = os.getenv("STRATEGYBAR_TARGET_URL", "https://strategybar.hnr2020.workers.dev").rstrip("/")
 INGEST_SECRET = os.getenv("MARKET_INGEST_SECRET", "")
-DEFAULT_SYMBOLS = "SNDK,IONQ,AVGO,ORCL"
-SYMBOLS = list(dict.fromkeys(x.strip().upper() for x in os.getenv("STRATEGYBAR_NAMUH_SYMBOLS", DEFAULT_SYMBOLS).split(",") if x.strip()))[:20]
+DEFAULT_SYMBOLS = "SNDK,IONQ,AVGO,ORCL,QLD,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,CRWV,VRT,IREN,NBIS,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,LEU,COIN,MSTR,HOOD,TSLA,SPY,QQQ,SMH,SOXX,IWM,GLD,TLT,XLE,XLF"
+SYMBOLS = list(dict.fromkeys(x.strip().upper() for x in os.getenv("STRATEGYBAR_NAMUH_SYMBOLS", DEFAULT_SYMBOLS).split(",") if x.strip()))
+MAX_MESSAGES = max(10, int(os.getenv("STRATEGYBAR_NAMUH_MAX_MESSAGES", "50")))
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
@@ -176,14 +177,15 @@ def on_message(message):
 
 
 def main():
-    print(time.strftime("%Y-%m-%dT%H:%M:%S"), f"NAMUH collector starting symbols={len(SYMBOLS)} {','.join(SYMBOLS)}", flush=True)
+    print(time.strftime("%Y-%m-%dT%H:%M:%S"), f"NAMUH collector starting symbols={len(SYMBOLS)} rotate_after={MAX_MESSAGES} messages {','.join(SYMBOLS)}", flush=True)
     worker = threading.Thread(target=_flush_worker, name="ingest-flush", daemon=True)
     worker.start()
     wait = 1
     while not _stop.is_set():
         try:
-            subscribe(SYMBOLS, on_message, tr_cd="RC", overseas=True)
+            subscribe(SYMBOLS, on_message, tr_cd="RC", overseas=True, max_messages=MAX_MESSAGES)
             wait = 1
+            time.sleep(0.25)
         except KeyboardInterrupt:
             _stop.set()
             break
