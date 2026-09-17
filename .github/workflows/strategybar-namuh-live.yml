@@ -32,8 +32,8 @@ jobs:
         run: |
           set -euo pipefail
           EXISTING=/etc/strategybar-namuh.env
-          KEY='${NHPLUG_APP_KEY:-}'
-          SECRET='${NHPLUG_APP_SECRET:-}'
+          KEY="${NHPLUG_APP_KEY:-}"
+          SECRET="${NHPLUG_APP_SECRET:-}"
           INGEST=''
 
           if sudo test -f "$EXISTING"; then
@@ -47,6 +47,9 @@ jobs:
           if [ -z "$INGEST" ] && sudo test -f /etc/strategybar-kis.env; then
             INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' /etc/strategybar-kis.env | head -n1)
           fi
+
+          KEY=$(printf '%s' "$KEY" | tr -d '\r\n')
+          SECRET=$(printf '%s' "$SECRET" | tr -d '\r\n')
 
           if [ -z "$KEY" ] || [ -z "$SECRET" ]; then
             echo 'NHPLUG_APP_KEY / NHPLUG_APP_SECRET are not configured in GitHub Actions secrets or the existing EC2 NAMUH environment.'
@@ -112,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo journalctl -u strategybar-namuh.service -n 120 --no-pager | tee /tmp/namuh-live.log
-          if grep -q 'WSS10013\|Missing MARKET_INGEST_SECRET\|subscription error' /tmp/namuh-live.log; then
+          if grep -q 'WSS10013\|IGW40031\|Missing MARKET_INGEST_SECRET\|subscription error' /tmp/namuh-live.log; then
             echo 'NAMUH collector has a permission/configuration error.'
             exit 20
           fi
