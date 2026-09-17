@@ -69,7 +69,8 @@ jobs:
           NHPLUG_AUTH_URL=https://api.nhplug.com:8443
           MARKET_INGEST_SECRET=${INGEST}
           STRATEGYBAR_TARGET_URL=${TARGET_URL}
-          STRATEGYBAR_NAMUH_SYMBOLS=SNDK,IONQ,AVGO,ORCL
+          STRATEGYBAR_NAMUH_SYMBOLS=SNDK,IONQ,AVGO,ORCL,QLD,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,CRWV,VRT,IREN,NBIS,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,LEU,COIN,MSTR,HOOD,TSLA,SPY,QQQ,SMH,SOXX,IWM,GLD,TLT,XLE,XLF
+          STRATEGYBAR_NAMUH_MAX_MESSAGES=50
           EOF
           echo 'NAMUH credentials prepared without printing secret values.'
 
@@ -150,5 +151,5 @@ jobs:
             exit 22
           fi
           if [ "$count" -eq 0 ]; then
-            echo 'No NAMUH quote reached the market API yet. Service remains installed for the next active US session.'
+            echo 'No NAMUH quote reached the market API yet. Service remains installed and will rotate through all configured symbols during the next active US session.'
           fi
