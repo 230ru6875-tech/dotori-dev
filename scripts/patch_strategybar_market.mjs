@@ -38,26 +38,16 @@ function pickNumber(obj,keys){
   return null;
 }
 
-function parseNpayBondObject(payload,years,key,label){
-  const maturity=String(years);
+function parseNpayBondObject(payload,reutersCode,key,label){
   const objects=walkObjects(payload,[]);
-  const candidates=objects.filter(obj=>{
-    const text=[
-      pickText(obj,['name','title','itemName','bondName','displayName','korName','nameKor']),
-      pickText(obj,['reutersCode','symbolCode','code'])
-    ].join(' ');
-    return (text.includes('미국')||text.toUpperCase().includes('US')) && (text.includes(maturity+'년')||text.includes(maturity+'Y')||text.includes(maturity+'YT'));
-  });
-  const candidate=candidates.find(obj=>{
-    const value=pickNumber(obj,['closePrice','value','price','yield','interestRate','currentPrice','lastPrice']);
-    return Number.isFinite(value)&&value>0&&value<20&&Math.abs(value-years)>0.0001;
-  });
+  const candidate=objects.find(obj=>String(obj?.reutersCode||obj?.symbolCode||obj?.code||'').trim()===reutersCode);
   if(!candidate){
-    const preview=candidates.slice(0,5).map(obj=>JSON.stringify(obj).slice(0,180)).join(' | ');
-    throw new Error('Npay US '+years+'Y bond object not found; candidates='+preview);
+    const codes=objects.map(obj=>String(obj?.reutersCode||obj?.symbolCode||obj?.code||'').trim()).filter(Boolean).filter(code=>code.includes('YT')).slice(0,20);
+    throw new Error('Npay bond code '+reutersCode+' not found; codes='+codes.join('|'));
   }
 
   const value=pickNumber(candidate,['closePrice','value','price','yield','interestRate','currentPrice','lastPrice']);
+  if(!(Number.isFinite(value)&&value>0&&value<20)) throw new Error('Npay '+reutersCode+' invalid yield '+value);
   const changeRaw=pickNumber(candidate,['fluctuations','changeValue','compareToPreviousClosePrice','change','difference']);
   const changePct=pickNumber(candidate,['fluctuationsRatio','changePct','changeRate','rate']);
   const previousClose=Number.isFinite(changeRaw)?round(value-changeRaw,4):pickNumber(candidate,['lastClosePrice','previousClose','prevClose']);
@@ -71,7 +61,7 @@ function parseNpayBondObject(payload,years,key,label){
     changePct:Number.isFinite(changePct)?round(changePct,2):null,
     changeUnit:'bp',unit:'percent',asOf,
     source:'Npay 증권 미국 국채 JSON',provider:'Npay 증권',providerPriority:1,
-    priceSession:'INTRADAY',sessionLabel:'실시간'
+    priceSession:'INTRADAY',sessionLabel:'실시간',reutersCode
   };
 }
 
@@ -89,9 +79,9 @@ async function fetchNpayTreasuryYields() {
   let payload;
   try{payload=JSON.parse(raw);}catch{throw new Error('Npay bond API invalid JSON: '+raw.slice(0,180));}
   return [
-    parseNpayBondObject(payload,2,'DGS2','미 2년물'),
-    parseNpayBondObject(payload,10,'DGS10','미 10년물'),
-    parseNpayBondObject(payload,30,'DGS30','미 30년물')
+    parseNpayBondObject(payload,'US2YT=RR','DGS2','미 2년물'),
+    parseNpayBondObject(payload,'US10YT=RR','DGS10','미 10년물'),
+    parseNpayBondObject(payload,'US30YT=RR','DGS30','미 30년물')
   ];
 }
 
@@ -172,4 +162,4 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: Npay US Treasury JSON API + Cboe VIX fallback.');
+console.log('Patched market.js: exact Npay Reuters-code Treasury parser + Cboe VIX fallback.');
