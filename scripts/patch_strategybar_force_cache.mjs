@@ -17,7 +17,7 @@ for (const [from,to] of replacements) {
 }
 if (!changed && !text.includes('if (cached && !force && age<60000)')) throw new Error('StrategyBar cache condition not found');
 
-for (const oldKey of ['"market:base"','"market:base:v2"','"market:base:v3"','"market:base:v4"','"market:base:v5"','"market:base:v6"']) text=text.replaceAll(oldKey,'"market:base:v7"');
+for (const oldKey of ['"market:base"','"market:base:v2"','"market:base:v3"','"market:base:v4"','"market:base:v5"','"market:base:v6"','"market:base:v7"']) text=text.replaceAll(oldKey,'"market:base:v8"');
 
 const brokerGuard='if (!quotes[row.key]) return row;';
 const brokerGuardReplacement="if (!quotes[row.key]) return row;\n    if (['DGS2','DGS10','DGS30'].includes(row.key) && String(row.provider||'')==='Npay 증권') return row;";
@@ -96,8 +96,12 @@ async function fetchBuildVixFallback(){
 const buildVixFallback=await fetchBuildVixFallback();
 const buildVixLiteral=JSON.stringify(buildVixFallback);
 
+// Replace only resilientVix. Npay helpers are injected between resilientVix and
+// fetchMarketSnapshot by patch_strategybar_market.mjs and must be preserved.
 const start=market.indexOf('async function resilientVix(){');
-const end=market.indexOf('export async function fetchMarketSnapshot',start);
+const helperStart=market.indexOf('function numberFromFormatted(',start);
+const snapshotStart=market.indexOf('export async function fetchMarketSnapshot',start);
+const end=helperStart>=0?helperStart:snapshotStart;
 if(start<0||end<0) throw new Error('resilientVix function anchors not found');
 const resilient=`async function resilientVix(){
   const attempts=[
@@ -135,7 +139,8 @@ const resilient=`async function resilientVix(){
 }
 `;
 market=market.slice(0,start)+resilient+market.slice(end);
+if(!market.includes('async function fetchNpayTreasuryYields()')) throw new Error('Npay Treasury helper was removed by cache patch');
 fs.writeFileSync(marketPath,market);
 
 for (const file of [marketPath,indexPath]) execFileSync(process.execPath,['--check',file],{stdio:'inherit'});
-console.log('Patched StrategyBar cache v7, macro fallback, protected Npay yields, and guaranteed build-time VIX fallback.');
+console.log('Patched StrategyBar cache v8; preserved Npay Treasury helpers and guaranteed VIX fallback.');
