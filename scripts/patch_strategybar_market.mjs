@@ -177,18 +177,26 @@ const replacement=String.raw`const market=macroResults.filter(([row])=>row).map(
       if(i>=0) market[i]=row; else market.push(row);
     }
   }
-  let vixIndex=market.findIndex(item=>item.key==='^VIX');
-  if(vixIndex<0 || !(Number(market[vixIndex]?.value)>0)){
-    try {
-      const cboe=await fetchCboeVix();
-      if(vixIndex>=0) market[vixIndex]=cboe; else market.push(cboe);
-    } catch(error) {
-      const row={key:'^VIX',label:'VIX',name:'VIX',value:null,source:'Cboe VIX Spot Price',provider:'Cboe',error:error instanceof Error?error.message:String(error)};
-      if(vixIndex>=0) market[vixIndex]=row; else market.push(row);
+  let vix=market.find(item=>item.key==='^VIX'&&finite(item.value));
+  if(!vix){
+    try{
+      vix=await resilientVix();
+      const i=market.findIndex(item=>item.key==='^VIX');
+      if(i>=0) market[i]=vix; else market.push(vix);
+    }catch(yahooError){
+      try{
+        vix=await fetchCboeVix();
+        const i=market.findIndex(item=>item.key==='^VIX');
+        if(i>=0) market[i]=vix; else market.push(vix);
+      }catch(cboeError){
+        const row={key:'^VIX',label:'VIX',name:'VIX',value:null,source:'VIX fallback chain',provider:'Yahoo/Cboe',error:'Yahoo: '+(yahooError instanceof Error?yahooError.message:String(yahooError))+'; Cboe: '+(cboeError instanceof Error?cboeError.message:String(cboeError))};
+        const i=market.findIndex(item=>item.key==='^VIX');
+        if(i>=0) market[i]=row; else market.push(row);
+      }
     }
   }
   `;
 
 text=text.slice(0,marketStart)+replacement+text.slice(errorsStart);
 fs.writeFileSync(path,text);
-console.log('Patched market.js: exact Npay Reuters-code Treasury parser + Cboe VIX fallback.');
+console.log('Patched market.js: exact Npay Treasury parser + restored Yahoo VIX + Cboe fallback.');
