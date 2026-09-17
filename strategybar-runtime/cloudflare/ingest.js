@@ -1,7 +1,7 @@
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CLOCK_SKEW_SECONDS = 300;
-const PROVIDER_PROTECT_MS = { TOSS: 15000, KIS: 30000, YAHOO: 0 };
-const PROVIDER_PRIORITY = { TOSS: 1, KIS: 2, YAHOO: 3 };
+const PROVIDER_PROTECT_MS = { ALPACA: 15000, TOSS: 15000, KIS: 30000, YAHOO: 0 };
+const PROVIDER_PRIORITY = { ALPACA: 1, TOSS: 2, KIS: 3, YAHOO: 4 };
 const SESSION_LABELS = { PREMARKET: "프리마켓", REGULAR: "정규장", AFTER_HOURS: "시간외" };
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), {
@@ -29,6 +29,13 @@ async function verifySignature(secret, timestamp, rawBody, signature) {
   return crypto.subtle.verify("HMAC",key,supplied,encoder.encode(`${timestamp}.${rawBody}`));
 }
 
+function optionalNumber(value, positive = false) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (positive && n <= 0) return null;
+  return Number(n.toFixed(6));
+}
+
 function normalizeQuote(input) {
   const symbol = String(input?.symbol || "").trim().toUpperCase();
   const provider = String(input?.provider || "").trim().toUpperCase();
@@ -48,8 +55,17 @@ function normalizeQuote(input) {
     provider,
     providerPriority:PROVIDER_PRIORITY[provider],
     source:String(input?.source || provider).slice(0,120),
-    previousClose:Number.isFinite(Number(input?.previousClose)) && Number(input.previousClose) > 0 ? Number(Number(input.previousClose).toFixed(6)) : null,
-    changePct:Number.isFinite(Number(input?.changePct)) ? Number(Number(input.changePct).toFixed(6)) : null,
+    previousClose:optionalNumber(input?.previousClose,true),
+    changePct:optionalNumber(input?.changePct,false),
+    open:optionalNumber(input?.open,true),
+    dayHigh:optionalNumber(input?.dayHigh,true),
+    dayLow:optionalNumber(input?.dayLow,true),
+    volume:optionalNumber(input?.volume,false),
+    vwap:optionalNumber(input?.vwap,true),
+    bidPrice:optionalNumber(input?.bidPrice,true),
+    askPrice:optionalNumber(input?.askPrice,true),
+    bidSize:optionalNumber(input?.bidSize,false),
+    askSize:optionalNumber(input?.askSize,false),
   };
 }
 
