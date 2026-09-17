@@ -11,6 +11,8 @@ on:
       - 'scripts/fix_strategybar_index_after_provider_patch.mjs'
       - 'scripts/patch_strategybar_force_cache.mjs'
       - 'scripts/enhance_strategybar_dashboard.mjs'
+      - 'tests/strategybar-watchdog.spec.js'
+      - 'tests/smoke.spec.js'
       - '.github/workflows/strategybar-deploy.yml'
   workflow_dispatch:
 
