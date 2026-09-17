@@ -7,6 +7,7 @@ const quotePattern=/function quoteFromResult\(symbol,result,name,category\)\{[\s
 const quoteReplacement=String.raw`function quoteFromResults(symbol,dailyResult,intradayResult,name,category){
   const q=dailyResult.indicators?.quote?.[0]||{},m=dailyResult.meta||{};
   const closes=(q.close||[]).filter(finite).map(Number),highs=(q.high||[]).filter(finite).map(Number),lows=(q.low||[]).filter(finite).map(Number),volumes=(q.volume||[]).filter(finite).map(Number);
+  const usedIntraday=Boolean(intradayResult&&intradayResult!==dailyResult);
   const selected=selectYahooSessionQuote(intradayResult)||selectYahooSessionQuote(dailyResult);
   const price=selected?.price??(finite(m.regularMarketPrice)?Number(m.regularMarketPrice):closes.at(-1));
   const dailyTimes=dailyResult.timestamp||[];
@@ -24,15 +25,21 @@ const quoteReplacement=String.raw`function quoteFromResults(symbol,dailyResult,i
   if(!finite(previousClose)||previousClose<=0)throw new Error(symbol+' previousClose missing');
   const signal=calculateSignal({price,previousClose,closes,highs,lows,volumes});
   const im=intradayResult?.meta||{};
-  return attachSeries({symbol,name,category,price:round(price),previousClose:round(previousClose),...signal,open:finite(im.regularMarketOpen)?round(im.regularMarketOpen):finite(m.regularMarketOpen)?round(m.regularMarketOpen):null,dayHigh:finite(im.regularMarketDayHigh)?round(im.regularMarketDayHigh):finite(m.regularMarketDayHigh)?round(m.regularMarketDayHigh):null,dayLow:finite(im.regularMarketDayLow)?round(im.regularMarketDayLow):finite(m.regularMarketDayLow)?round(m.regularMarketDayLow):null,volume:finite(im.regularMarketVolume)?Number(im.regularMarketVolume):finite(m.regularMarketVolume)?Number(m.regularMarketVolume):volumes.at(-1)||null,marketState:selected?.marketState||im.marketState||m.marketState||null,priceSession:selected?.priceSession||'REGULAR',sessionLabel:selected?.sessionLabel||'정규장',asOf:selected?.timestamp?new Date(selected.timestamp*1000).toISOString():new Date().toISOString(),source:'Yahoo Finance intraday',provider:'Yahoo',providerPriority:3},closes)}
+  return attachSeries({symbol,name,category,price:round(price),previousClose:round(previousClose),...signal,open:finite(im.regularMarketOpen)?round(im.regularMarketOpen):finite(m.regularMarketOpen)?round(m.regularMarketOpen):null,dayHigh:finite(im.regularMarketDayHigh)?round(im.regularMarketDayHigh):finite(m.regularMarketDayHigh)?round(m.regularMarketDayHigh):null,dayLow:finite(im.regularMarketDayLow)?round(im.regularMarketDayLow):finite(m.regularMarketDayLow)?round(m.regularMarketDayLow):null,volume:finite(im.regularMarketVolume)?Number(im.regularMarketVolume):finite(m.regularMarketVolume)?Number(m.regularMarketVolume):volumes.at(-1)||null,marketState:selected?.marketState||im.marketState||m.marketState||null,priceSession:selected?.priceSession||'REGULAR',sessionLabel:selected?.sessionLabel||'정규장',asOf:selected?.timestamp?new Date(selected.timestamp*1000).toISOString():new Date().toISOString(),source:usedIntraday?'Yahoo Finance intraday':'Yahoo Finance daily/meta',provider:'Yahoo',providerPriority:3},closes)}
 function macroFromResult`;
 if(quotePattern.test(text)) text=text.replace(quotePattern,quoteReplacement);
 else if(!text.includes('function quoteFromResults(')) throw new Error('quote function anchor not found');
 
 const stockOld='const stockResults=await Promise.all(stockPairs.map(async([symbol,[name,category]])=>{try{return[symbol,quoteFromResult(symbol,await yahooChart(symbol),name,category),null]}catch(error){return[symbol,null,error instanceof Error?error.message:String(error)]}}));';
-const stockNew=String.raw`const stockResults=await Promise.all(stockPairs.map(async([symbol,[name,category]])=>{try{const [daily,intraday]=await Promise.all([yahooChart(symbol,'6mo','1d'),yahooChart(symbol,'5d','5m')]);return[symbol,quoteFromResults(symbol,daily,intraday,name,category),null]}catch(error){return[symbol,null,error instanceof Error?error.message:String(error)]}}));`;
+const stockNew=String.raw`const intradaySymbols=new Set(['SNDK','IONQ']);
+  const stockResults=await Promise.all(stockPairs.map(async([symbol,[name,category]])=>{try{
+    const daily=await yahooChart(symbol,'6mo','1d');
+    const needIntraday=intradaySymbols.has(symbol)||symbol===extraSymbol;
+    const intraday=needIntraday?await yahooChart(symbol,'5d','5m'):daily;
+    return[symbol,quoteFromResults(symbol,daily,intraday,name,category),null];
+  }catch(error){return[symbol,null,error instanceof Error?error.message:String(error)]}}));`;
 if(text.includes(stockOld)) text=text.replace(stockOld,stockNew);
-else if(!text.includes("yahooChart(symbol,'5d','5m')")) throw new Error('stockResults anchor not found');
+else if(!text.includes("const intradaySymbols=new Set(['SNDK','IONQ'])")) throw new Error('stockResults anchor not found');
 
 const snapshotMarker='export async function fetchMarketSnapshot';
 const goldHelper=String.raw`
@@ -67,4 +74,4 @@ if(!text.includes('const gold=await fetchDomesticGold();')){
 }
 
 fs.writeFileSync(path,text);
-console.log('Patched StrategyBar: daily indicators + 5m session-aware current prices + previous-close integrity + domestic gold.');
+console.log('Patched StrategyBar: daily signals for all stocks, 5m intraday only for SNDK/IONQ, previous-close integrity, domestic gold.');
