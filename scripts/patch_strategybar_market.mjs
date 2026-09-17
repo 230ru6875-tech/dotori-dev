@@ -3,6 +3,35 @@ import fs from 'node:fs';
 const path = 'strategybar-runtime/cloudflare/market.js';
 let text = fs.readFileSync(path, 'utf8');
 
+function num(value){
+  const n=Number(String(value??'').replace(/,/g,'').replace(/%/g,'').trim());
+  return Number.isFinite(n)?n:null;
+}
+function walk(value,out=[]){
+  if(Array.isArray(value)){ for(const item of value) walk(item,out); return out; }
+  if(value&&typeof value==='object'){ out.push(value); for(const child of Object.values(value)) walk(child,out); }
+  return out;
+}
+async function preflightNpay(){
+  const url='https://m.stock.naver.com/front-api/marketIndex/bondList?countryCode=USA';
+  const response=await fetch(url,{headers:{'accept':'application/json,text/plain,*/*','user-agent':'Mozilla/5.0 StrategyBarDeploy/1.0','cache-control':'no-cache'}});
+  const raw=await response.text();
+  if(!response.ok) throw new Error('Npay preflight HTTP '+response.status+' body='+raw.slice(0,200));
+  let payload;
+  try{ payload=JSON.parse(raw); }catch{ throw new Error('Npay preflight invalid JSON: '+raw.slice(0,200)); }
+  const objects=walk(payload,[]);
+  const targets=[['US2YT=RR','2Y'],['US10YT=RR','10Y'],['US30YT=RR','30Y']];
+  for(const [code,label] of targets){
+    const row=objects.find(obj=>String(obj?.reutersCode||obj?.symbolCode||obj?.code||'').trim()===code);
+    if(!row) throw new Error('Npay preflight missing '+code+'; codes='+objects.map(o=>o?.reutersCode||o?.symbolCode||o?.code).filter(Boolean).filter(c=>String(c).includes('YT')).slice(0,20).join('|'));
+    const value=num(row.closePrice??row.value??row.price??row.yield??row.interestRate??row.currentPrice??row.lastPrice);
+    if(!(value>0&&value<20)) throw new Error('Npay preflight invalid '+code+' value='+value+' row='+JSON.stringify(row).slice(0,240));
+    console.log('Npay '+label+': '+value+' ('+code+')');
+  }
+}
+
+await preflightNpay();
+
 const patchBlock = String.raw`
 function numberFromFormatted(value){
   if(value===null||value===undefined)return null;
