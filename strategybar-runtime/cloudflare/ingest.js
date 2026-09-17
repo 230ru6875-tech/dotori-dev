@@ -1,7 +1,7 @@
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CLOCK_SKEW_SECONDS = 300;
-const PROVIDER_PROTECT_MS = { KIS: 15000, ALPACA: 10000, NAMUH: 60000, TOSS: 0, YAHOO: 0 };
-const PROVIDER_PRIORITY = { KIS: 1, ALPACA: 2, NAMUH: 3, YAHOO: 4, TOSS: 5 };
+const PROVIDER_PROTECT_MS = { NAMUH: 15000, KIS: 12000, ALPACA: 10000, TOSS: 0, YAHOO: 0 };
+const PROVIDER_PRIORITY = { NAMUH: 1, KIS: 2, ALPACA: 3, YAHOO: 4, TOSS: 5 };
 const MAX_HIGHER_PRIORITY_LAG_MS = 5000;
 const SESSION_LABELS = { PREMARKET: "프리마켓", REGULAR: "정규장", AFTER_HOURS: "시간외" };
 
@@ -70,9 +70,29 @@ function normalizeQuote(input) {
   };
 }
 
+async function publishLive(env, accepted, receivedAt) {
+  if (!accepted.length || !env.LIVE_QUOTES) return 0;
+  try {
+    const id=env.LIVE_QUOTES.idFromName("holdings-live");
+    const stub=env.LIVE_QUOTES.get(id);
+    const response=await stub.fetch("https://live.internal/publish", {
+      method:"POST", headers:{"content-type":"application/json"},
+      body:JSON.stringify({quotes:accepted,receivedAt:new Date(receivedAt).toISOString()}),
+    });
+    const payload=await response.json().catch(()=>({}));
+    return Number(payload?.delivered||0);
+  } catch {
+    return 0;
+  }
+}
+
+function isD1WriteLimitError(error) {
+  const text=String(error?.message||error||"");
+  return /free tier daily row write limit|exceeded D1.*row write limit/i.test(text);
+}
+
 export async function handleMarketIngest(request, env) {
   if (!env.MARKET_INGEST_SECRET) return json({ok:false,error:"시세 수신 Secret이 설정되지 않았습니다."},503);
-  if (!env.DB) return json({ok:false,error:"D1 연결이 설정되지 않았습니다."},503);
   const length = Number(request.headers.get("content-length") || 0);
   if (length > MAX_BODY_BYTES) return json({ok:false,error:"요청 본문이 너무 큽니다."},413);
   const timestamp = request.headers.get("x-strategybar-timestamp") || "";
@@ -89,6 +109,7 @@ export async function handleMarketIngest(request, env) {
   if (!Array.isArray(body.quotes) || !body.quotes.length || body.quotes.length > 200) return json({ok:false,error:"quotes는 1~200개여야 합니다."},400);
   const normalized = body.quotes.map(normalizeQuote).filter(Boolean);
   if (normalized.length !== body.quotes.length) return json({ok:false,error:"시세 항목 형식이 올바르지 않습니다."},400);
+
   const unique = new Map();
   for (const quote of normalized) {
     const current=unique.get(quote.symbol);
@@ -96,15 +117,19 @@ export async function handleMarketIngest(request, env) {
   }
   const receivedAt=Date.now();
   const incoming=[...unique.values()];
-  const symbols=incoming.map((quote)=>quote.symbol);
   const existing=new Map();
-  if (symbols.length) {
-    const placeholders=symbols.map(()=>"?").join(",");
-    const rows=await env.DB.prepare(`SELECT symbol,payload,provider,provider_priority,quote_time,received_at FROM broker_quotes WHERE symbol IN (${placeholders})`).bind(...symbols).all();
-    for (const row of rows.results||[]) {
-      try { existing.set(row.symbol,{...row,quote:JSON.parse(row.payload)}); } catch { }
-    }
+
+  if (env.DB && incoming.length) {
+    try {
+      const symbols=incoming.map((quote)=>quote.symbol);
+      const placeholders=symbols.map(()=>"?").join(",");
+      const rows=await env.DB.prepare(`SELECT symbol,payload,provider,provider_priority,quote_time,received_at FROM broker_quotes WHERE symbol IN (${placeholders})`).bind(...symbols).all();
+      for (const row of rows.results||[]) {
+        try { existing.set(row.symbol,{...row,quote:JSON.parse(row.payload)}); } catch { }
+      }
+    } catch { }
   }
+
   const accepted=[];
   const suppressed=[];
   for (const quote of incoming) {
@@ -123,28 +148,34 @@ export async function handleMarketIngest(request, env) {
     const higherPriorityButTooOld=higherPriority && currentQuoteTime>0 && incomingQuoteTime+MAX_HIGHER_PRIORITY_LAG_MS<currentQuoteTime;
     const lowerPriorityMuchNewer=lowerPriority && currentQuoteTime>0 && incomingQuoteTime>currentQuoteTime+MAX_HIGHER_PRIORITY_LAG_MS;
     if (olderSameProvider || higherPriorityButTooOld || (lowerPriority&&currentFresh&&!lowerPriorityMuchNewer)) {
-      suppressed.push({
-        symbol:quote.symbol,incoming:quote.provider,kept:currentProvider,
-        reason:olderSameProvider?"older-quote":higherPriorityButTooOld?"higher-priority-stale":"higher-priority-live-fresh"
-      });
+      suppressed.push({symbol:quote.symbol,incoming:quote.provider,kept:currentProvider,reason:olderSameProvider?"older-quote":higherPriorityButTooOld?"higher-priority-stale":"higher-priority-live-fresh"});
       continue;
     }
     accepted.push(quote);
   }
-  const statements=accepted.map((quote)=>env.DB.prepare(
-    "INSERT INTO broker_quotes(symbol,payload,provider,provider_priority,quote_time,received_at) VALUES(?,?,?,?,?,?) "
-    + "ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload,provider=excluded.provider,provider_priority=excluded.provider_priority,quote_time=excluded.quote_time,received_at=excluded.received_at"
-  ).bind(quote.symbol,JSON.stringify(quote),quote.provider,quote.providerPriority,Date.parse(quote.asOf),receivedAt));
-  if (statements.length) await env.DB.batch(statements);
-  if (accepted.length&&env.LIVE_QUOTES) {
+
+  // Realtime delivery is the primary path. D1 persistence is best-effort only.
+  const delivered=await publishLive(env,accepted,receivedAt);
+
+  let persisted=0;
+  let persistence="disabled";
+  if (env.DB && accepted.length) {
+    const statements=accepted.map((quote)=>env.DB.prepare(
+      "INSERT INTO broker_quotes(symbol,payload,provider,provider_priority,quote_time,received_at) VALUES(?,?,?,?,?,?) "
+      + "ON CONFLICT(symbol) DO UPDATE SET payload=excluded.payload,provider=excluded.provider,provider_priority=excluded.provider_priority,quote_time=excluded.quote_time,received_at=excluded.received_at"
+    ).bind(quote.symbol,JSON.stringify(quote),quote.provider,quote.providerPriority,Date.parse(quote.asOf),receivedAt));
     try {
-      const id=env.LIVE_QUOTES.idFromName("holdings-live");
-      const stub=env.LIVE_QUOTES.get(id);
-      await stub.fetch("https://live.internal/publish", {
-        method:"POST", headers:{"content-type":"application/json"},
-        body:JSON.stringify({quotes:accepted,receivedAt:new Date(receivedAt).toISOString()}),
-      });
-    } catch { }
+      await env.DB.batch(statements);
+      persisted=accepted.length;
+      persistence="d1";
+    } catch (error) {
+      if (isD1WriteLimitError(error)) {
+        persistence="live-only-d1-quota";
+      } else {
+        throw error;
+      }
+    }
   }
-  return json({ok:true,accepted:accepted.length,suppressed,receivedAt:new Date(receivedAt).toISOString()});
+
+  return json({ok:true,accepted:accepted.length,suppressed,delivered,persisted,persistence,receivedAt:new Date(receivedAt).toISOString()});
 }
