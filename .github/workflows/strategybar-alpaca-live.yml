@@ -64,7 +64,7 @@ jobs:
           MARKET_INGEST_SECRET=${INGEST}
           STRATEGYBAR_TARGET_URL=${TARGET_URL}
           ALPACA_FEED=iex
-          STRATEGYBAR_SYMBOLS=SNDK,IONQ,AVGO,ORCL,NVDA,AMD,TSLA,PLTR,QQQ,SPY
+          STRATEGYBAR_SYMBOLS=IONQ,SNDK,AVGO,ORCL,QLD,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,CRWV,VRT,IREN,NBIS,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,LEU,COIN,MSTR,HOOD,TSLA,SPY,QQQ,SMH,SOXX,IWM,GLD,TLT,XLE,XLF
           EOF
           printf '%s' "$INGEST" > /tmp/strategybar-ingest-secret
           chmod 600 /tmp/strategybar-ingest-secret
@@ -121,7 +121,7 @@ jobs:
           sudo systemctl daemon-reload
           sudo systemctl enable --now strategybar-alpaca.service
           sudo systemctl restart strategybar-alpaca.service
-          sleep 5
+          sleep 6
           sudo systemctl is-active --quiet strategybar-alpaca.service
           echo 'strategybar-alpaca.service is active.'
 
@@ -131,18 +131,21 @@ jobs:
           set -euo pipefail
           ok=0
           for i in $(seq 1 24); do
-            curl -fsSL "${TARGET_URL}/api/market?only=SNDK&force=1&t=$(date +%s)" -o /tmp/sndk-live.json || true
-            provider=$(node -e "try{const x=require('/tmp/sndk-live.json');process.stdout.write(String(x.symbols?.SNDK?.provider||''))}catch{}")
-            source=$(node -e "try{const x=require('/tmp/sndk-live.json');process.stdout.write(String(x.symbols?.SNDK?.source||''))}catch{}")
-            if [ "$provider" = 'ALPACA' ]; then
-              echo "SNDK live provider=${provider}; source=${source}"
-              ok=1
-              break
-            fi
+            curl -fsSL "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/market-live.json || true
+            count=$(node - <<'NODE'
+          try {
+            const x=require('/tmp/market-live.json');
+            const rows=Object.values(x.symbols||{});
+            process.stdout.write(String(rows.filter(r=>String(r?.provider||'').toUpperCase()==='ALPACA').length));
+          } catch { process.stdout.write('0'); }
+          NODE
+            )
+            echo "ALPACA live symbols=${count}"
+            if [ "$count" -ge 20 ]; then ok=1; break; fi
             sleep 5
           done
+          sudo journalctl -u strategybar-alpaca.service -n 20 --no-pager
           if [ "$ok" -ne 1 ]; then
-            echo 'Alpaca collector service is active, but StrategyBar has not accepted an ALPACA quote yet.'
-            sudo journalctl -u strategybar-alpaca.service -n 30 --no-pager
+            echo 'Fewer than 20 StrategyBar symbols are currently backed by ALPACA.'
             exit 13
           fi
