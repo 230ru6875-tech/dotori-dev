@@ -14,21 +14,34 @@ export class LiveQuotes {
   constructor(ctx, env) {
     this.ctx = ctx;
     this.env = env;
+    this.latest = new Map();
   }
 
   async latestQuotes(symbols) {
-    if (!this.env.DB || !symbols.length) return [];
-    try {
-      const placeholders = symbols.map(() => "?").join(",");
-      const result = await this.env.DB.prepare(
-        `SELECT symbol,payload,received_at FROM broker_quotes WHERE symbol IN (${placeholders})`
-      ).bind(...symbols).all();
-      return (result.results || []).map((row) => {
-        try {
-          return { ...JSON.parse(row.payload), receivedAt: new Date(Number(row.received_at)).toISOString() };
-        } catch { return null; }
-      }).filter(Boolean);
-    } catch { return []; }
+    if (!symbols.length) return [];
+    const wanted = new Set(parseSymbols(symbols));
+    const merged = new Map();
+
+    for (const symbol of wanted) {
+      const quote = this.latest.get(symbol);
+      if (quote) merged.set(symbol, quote);
+    }
+
+    const missing = [...wanted].filter((symbol) => !merged.has(symbol));
+    if (this.env.DB && missing.length) {
+      try {
+        const placeholders = missing.map(() => "?").join(",");
+        const result = await this.env.DB.prepare(
+          `SELECT symbol,payload,received_at FROM broker_quotes WHERE symbol IN (${placeholders})`
+        ).bind(...missing).all();
+        for (const row of result.results || []) {
+          try {
+            merged.set(row.symbol, { ...JSON.parse(row.payload), receivedAt: new Date(Number(row.received_at)).toISOString() });
+          } catch { }
+        }
+      } catch { }
+    }
+    return [...merged.values()];
   }
 
   async sendSnapshot(ws, symbols) {
@@ -58,6 +71,17 @@ export class LiveQuotes {
       try { body = await request.json(); } catch { return json({ ok: false, error: "invalid json" }, 400); }
       const quotes = Array.isArray(body?.quotes) ? body.quotes : [];
       if (!quotes.length) return json({ ok: true, delivered: 0 });
+
+      const receivedAt = body?.receivedAt || new Date().toISOString();
+      for (const quote of quotes) {
+        const symbol = String(quote?.symbol || "").trim().toUpperCase();
+        if (!validSymbol(symbol)) continue;
+        const previous = this.latest.get(symbol);
+        const previousTime = Date.parse(previous?.asOf || 0) || 0;
+        const incomingTime = Date.parse(quote?.asOf || 0) || Date.now();
+        if (!previous || incomingTime >= previousTime) this.latest.set(symbol, { ...quote, symbol, receivedAt });
+      }
+
       let delivered = 0;
       for (const ws of this.ctx.getWebSockets()) {
         const attachment = ws.deserializeAttachment() || {};
@@ -69,7 +93,12 @@ export class LiveQuotes {
           delivered += 1;
         } catch { }
       }
-      return json({ ok: true, delivered });
+      return json({ ok: true, delivered, cached: this.latest.size });
+    }
+
+    if (url.pathname === "/latest") {
+      const symbols = parseSymbols(url.searchParams.get("symbols"));
+      return json({ ok: true, quotes: await this.latestQuotes(symbols), at: new Date().toISOString() });
     }
 
     return json({ ok: false, error: "not found" }, 404);
