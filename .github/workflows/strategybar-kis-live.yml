@@ -1,0 +1,142 @@
+name: StrategyBar KIS Live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'strategybar-live/kis-collector.mjs'
+      - '.github/workflows/strategybar-kis-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategybar-kis-live
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: self-hosted
+    env:
+      KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+      KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      TARGET_URL: https://strategybar.hnr2020.workers.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Prepare KIS collector credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXISTING=/etc/strategybar-kis.env
+          KEY='${KIS_APP_KEY:-}'
+          SECRET='${KIS_APP_SECRET:-}'
+          INGEST=''
+
+          if sudo test -f "$EXISTING"; then
+            if [ -z "$KEY" ]; then KEY=$(sudo sed -n 's/^KIS_APP_KEY=//p' "$EXISTING" | head -n1); fi
+            if [ -z "$SECRET" ]; then SECRET=$(sudo sed -n 's/^KIS_APP_SECRET=//p' "$EXISTING" | head -n1); fi
+            INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' "$EXISTING" | head -n1)
+          fi
+          if [ -z "$INGEST" ] && sudo test -f /etc/strategybar-alpaca.env; then
+            INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' /etc/strategybar-alpaca.env | head -n1)
+          fi
+          if [ -z "$KEY" ] || [ -z "$SECRET" ]; then
+            echo 'KIS_APP_KEY / KIS_APP_SECRET are not configured in GitHub Actions secrets or the existing EC2 KIS environment.'
+            exit 12
+          fi
+          if [ -z "$INGEST" ]; then
+            echo 'MARKET_INGEST_SECRET was not found. Deploy the Alpaca collector first so both collectors share the same ingest secret.'
+            exit 13
+          fi
+
+          sudo install -d -m 0755 /opt/strategybar-kis
+          sudo install -m 0644 strategybar-live/kis-collector.mjs /opt/strategybar-kis/kis-collector.mjs
+          sudo install -m 0644 strategybar-live/package.json /opt/strategybar-kis/package.json
+          sudo bash -c 'umask 077; cat > /etc/strategybar-kis.env' <<EOF
+          KIS_APP_KEY=${KEY}
+          KIS_APP_SECRET=${SECRET}
+          MARKET_INGEST_SECRET=${INGEST}
+          STRATEGYBAR_TARGET_URL=${TARGET_URL}
+          KIS_WS_URL=ws://ops.koreainvestment.com:21000
+          KIS_APPROVAL_URL=https://openapi.koreainvestment.com:9443/oauth2/Approval
+          KIS_CORE_QUOTE_SYMBOLS=SNDK,IONQ,AVGO,ORCL
+          STRATEGYBAR_SYMBOLS=IONQ,SNDK,AVGO,ORCL,QLD,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,CRWV,VRT,IREN,NBIS,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,LEU,COIN,MSTR,HOOD,TSLA,SPY,QQQ,SMH,SOXX,IWM,GLD,TLT,XLE,XLF
+          EOF
+          echo 'KIS collector credentials prepared without printing secret values.'
+
+      - name: Install and start EC2 KIS service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo npm install --omit=dev --prefix /opt/strategybar-kis >/dev/null
+          sudo tee /etc/systemd/system/strategybar-kis.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=StrategyBar KIS overseas WebSocket quote collector
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/strategybar-kis
+          EnvironmentFile=/etc/strategybar-kis.env
+          ExecStart=/usr/bin/node /opt/strategybar-kis/kis-collector.mjs
+          Restart=always
+          RestartSec=3
+          NoNewPrivileges=true
+          PrivateTmp=true
+          LimitNOFILE=65536
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now strategybar-kis.service
+          sudo systemctl restart strategybar-kis.service
+          sleep 12
+          sudo systemctl is-active --quiet strategybar-kis.service
+          echo 'strategybar-kis.service is active.'
+
+      - name: Validate KIS subscriptions and StrategyBar ingest
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo journalctl -u strategybar-kis.service -n 80 --no-pager | tee /tmp/kis-live.log
+          if grep -q 'Missing KIS exchange mapping\|subscription limit exceeded\|approval failed' /tmp/kis-live.log; then
+            echo 'KIS collector has a startup/configuration error.'
+            exit 20
+          fi
+          if ! grep -q 'KIS subscriptions sent' /tmp/kis-live.log; then
+            echo 'KIS subscriptions were not sent.'
+            exit 21
+          fi
+
+          # The US market can be closed. Validate live provider appearance when data is flowing,
+          # otherwise keep the service active and surface the latest KIS log for the next market session.
+          count=0
+          for i in $(seq 1 12); do
+            curl -fsSL "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/market-kis.json || true
+            count=$(node - <<'NODE'
+          try {
+            const x=require('/tmp/market-kis.json');
+            const rows=Object.values(x.symbols||{});
+            process.stdout.write(String(rows.filter(r=>String(r?.provider||'').toUpperCase()==='KIS').length));
+          } catch { process.stdout.write('0'); }
+          NODE
+            )
+            echo "KIS-backed symbols=${count}"
+            if [ "$count" -gt 0 ]; then break; fi
+            sleep 5
+          done
+          if [ "$count" -eq 0 ]; then
+            echo 'No KIS quote reached the market API yet. This can be normal outside an active US session; service remains installed and active.'
+          fi
