@@ -6,7 +6,8 @@ const API_SECRET = process.env.ALPACA_API_SECRET || '';
 const TARGET_URL = (process.env.STRATEGYBAR_TARGET_URL || 'https://strategybar.hnr2020.workers.dev').replace(/\/$/,'');
 const INGEST_SECRET = process.env.MARKET_INGEST_SECRET || '';
 const FEED = process.env.ALPACA_FEED || 'iex';
-const SYMBOLS = [...new Set((process.env.STRATEGYBAR_SYMBOLS || 'SNDK,IONQ,AVGO,ORCL,NVDA,AMD,TSLA,PLTR,QQQ,SPY').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean))].slice(0,50);
+const DEFAULT_SYMBOLS = 'IONQ,SNDK,AVGO,ORCL,QLD,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,CRWV,VRT,IREN,NBIS,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,LEU,COIN,MSTR,HOOD,TSLA,SPY,QQQ,SMH,SOXX,IWM,GLD,TLT,XLE,XLF';
+const SYMBOLS = [...new Set((process.env.STRATEGYBAR_SYMBOLS || DEFAULT_SYMBOLS).split(',').map(x=>x.trim().toUpperCase()).filter(Boolean))].slice(0,50);
 const WS_URL = `wss://stream.data.alpaca.markets/v2/${FEED}`;
 const SNAPSHOT_URL = `https://data.alpaca.markets/v2/stocks/snapshots?symbols=${encodeURIComponent(SYMBOLS.join(','))}&feed=${encodeURIComponent(FEED)}`;
 
@@ -118,6 +119,7 @@ async function loadSnapshot() {
   });
   if (!res.ok) throw new Error(`snapshot HTTP ${res.status}`);
   const data = await res.json();
+  let seeded = 0;
   for (const symbol of SYMBOLS) {
     const s = data?.[symbol];
     if (!s) continue;
@@ -128,6 +130,7 @@ async function loadSnapshot() {
     const price = Number(s.latestTrade?.p) > 0 ? Number(s.latestTrade.p) : null;
     const asOf = s.latestTrade?.t || new Date().toISOString();
     if (price) {
+      seeded += 1;
       lastTrade.set(symbol,{price,asOf});
       queueQuote(symbol,price,asOf,{
         bidPrice:s.latestQuote?.bp, askPrice:s.latestQuote?.ap,
@@ -135,12 +138,12 @@ async function loadSnapshot() {
       });
     }
   }
-  console.log(new Date().toISOString(), `snapshot seeded ${previousClose.size} symbols`);
+  console.log(new Date().toISOString(), `snapshot seeded ${seeded}/${SYMBOLS.length} live symbols`);
 }
 
 function connect() {
   if (shuttingDown) return;
-  console.log(new Date().toISOString(), 'connecting', WS_URL, SYMBOLS.join(','));
+  console.log(new Date().toISOString(), 'connecting', WS_URL, `symbols=${SYMBOLS.length}`);
   const ws = new WebSocket(WS_URL, { handshakeTimeout:15000 });
   let authed = false;
   let heartbeat = null;
@@ -159,7 +162,14 @@ function connect() {
         authed = true;
         reconnectMs = 1000;
         ws.send(JSON.stringify({action:'subscribe',trades:SYMBOLS,quotes:SYMBOLS,bars:SYMBOLS}));
-        console.log(new Date().toISOString(), 'alpaca authenticated');
+        console.log(new Date().toISOString(), `alpaca authenticated; subscribed ${SYMBOLS.length} symbols`);
+        continue;
+      }
+      if (m.T === 'subscription') {
+        const tradeCount=Array.isArray(m.trades)?m.trades.length:0;
+        const quoteCount=Array.isArray(m.quotes)?m.quotes.length:0;
+        const barCount=Array.isArray(m.bars)?m.bars.length:0;
+        console.log(new Date().toISOString(), `alpaca subscription confirmed trades=${tradeCount} quotes=${quoteCount} bars=${barCount}`);
         continue;
       }
       if (m.T === 'error') {
