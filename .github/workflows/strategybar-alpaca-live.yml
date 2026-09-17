@@ -1,0 +1,148 @@
+name: StrategyBar Alpaca Live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'strategybar-live/**'
+      - '.github/workflows/strategybar-alpaca-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategybar-alpaca-live
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: self-hosted
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 6ead7cb11a99b93959c5437fbcd01eb7
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+      TARGET_URL: https://strategybar.hnr2020.workers.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Prepare live collector credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXISTING=/etc/strategybar-alpaca.env
+          EXISTING_KEY=''
+          EXISTING_SECRET=''
+          EXISTING_INGEST=''
+          if sudo test -f "$EXISTING"; then
+            EXISTING_KEY=$(sudo sed -n 's/^ALPACA_API_KEY=//p' "$EXISTING" | head -n1)
+            EXISTING_SECRET=$(sudo sed -n 's/^ALPACA_API_SECRET=//p' "$EXISTING" | head -n1)
+            EXISTING_INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' "$EXISTING" | head -n1)
+          fi
+          KEY="${ALPACA_API_KEY:-${EXISTING_KEY}}"
+          SECRET="${ALPACA_API_SECRET:-${EXISTING_SECRET}}"
+          if [ -z "$KEY" ] || [ -z "$SECRET" ]; then
+            echo 'ALPACA_API_KEY / ALPACA_API_SECRET are not configured in GitHub Actions secrets or the existing EC2 service environment.'
+            exit 12
+          fi
+          INGEST="${EXISTING_INGEST}"
+          if [ -z "$INGEST" ]; then INGEST=$(openssl rand -hex 32); fi
+          sudo install -d -m 0755 /opt/strategybar-alpaca
+          sudo install -m 0644 strategybar-live/collector.mjs /opt/strategybar-alpaca/collector.mjs
+          sudo install -m 0644 strategybar-live/package.json /opt/strategybar-alpaca/package.json
+          sudo bash -c 'umask 077; cat > /etc/strategybar-alpaca.env' <<EOF
+          ALPACA_API_KEY=${KEY}
+          ALPACA_API_SECRET=${SECRET}
+          MARKET_INGEST_SECRET=${INGEST}
+          STRATEGYBAR_TARGET_URL=${TARGET_URL}
+          ALPACA_FEED=iex
+          STRATEGYBAR_SYMBOLS=SNDK,IONQ,AVGO,ORCL,NVDA,AMD,TSLA,PLTR,QQQ,SPY
+          EOF
+          printf '%s' "$INGEST" > /tmp/strategybar-ingest-secret
+          chmod 600 /tmp/strategybar-ingest-secret
+          echo 'Collector credentials prepared without printing secret values.'
+
+      - name: Sync ingest secret to Cloudflare
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          cp strategybar-runtime/wrangler.jsonc /tmp/strategybar-live-wrangler.jsonc
+          SETTINGS_URL="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/strategybar/settings"
+          curl -fsSL -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H 'Content-Type: application/json' "$SETTINGS_URL" -o /tmp/strategybar-worker-settings.json
+          DB_ID=$(node - <<'NODE'
+          const fs=require('fs');
+          const body=JSON.parse(fs.readFileSync('/tmp/strategybar-worker-settings.json','utf8'));
+          const row=(body?.result?.bindings||[]).find(x=>x.name==='DB'&&(x.type==='d1'||x.type==='d1_database'));
+          const id=row?.id||row?.database_id||row?.namespace_id;
+          if(!id) process.exit(2);
+          process.stdout.write(String(id));
+          NODE
+          )
+          sed -i "s/REPLACE_AFTER_CLOUDFLARE_CONNECTION/${DB_ID}/g" /tmp/strategybar-live-wrangler.jsonc
+          cat /tmp/strategybar-ingest-secret | npx --yes wrangler@4.119.0 secret put MARKET_INGEST_SECRET --config /tmp/strategybar-live-wrangler.jsonc >/dev/null
+          rm -f /tmp/strategybar-ingest-secret
+          echo 'Cloudflare ingest secret synchronized.'
+
+      - name: Install and start EC2 Alpaca service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo npm install --omit=dev --prefix /opt/strategybar-alpaca >/dev/null
+          sudo tee /etc/systemd/system/strategybar-alpaca.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=StrategyBar Alpaca WebSocket live quote collector
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/strategybar-alpaca
+          EnvironmentFile=/etc/strategybar-alpaca.env
+          ExecStart=/usr/bin/node /opt/strategybar-alpaca/collector.mjs
+          Restart=always
+          RestartSec=3
+          NoNewPrivileges=true
+          PrivateTmp=true
+          LimitNOFILE=65536
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now strategybar-alpaca.service
+          sudo systemctl restart strategybar-alpaca.service
+          sleep 5
+          sudo systemctl is-active --quiet strategybar-alpaca.service
+          echo 'strategybar-alpaca.service is active.'
+
+      - name: Validate Alpaca live feed reaches StrategyBar
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 24); do
+            curl -fsSL "${TARGET_URL}/api/market?only=SNDK&force=1&t=$(date +%s)" -o /tmp/sndk-live.json || true
+            provider=$(node -e "try{const x=require('/tmp/sndk-live.json');process.stdout.write(String(x.symbols?.SNDK?.provider||''))}catch{}")
+            source=$(node -e "try{const x=require('/tmp/sndk-live.json');process.stdout.write(String(x.symbols?.SNDK?.source||''))}catch{}")
+            if [ "$provider" = 'ALPACA' ]; then
+              echo "SNDK live provider=${provider}; source=${source}"
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo 'Alpaca collector service is active, but StrategyBar has not accepted an ALPACA quote yet.'
+            sudo journalctl -u strategybar-alpaca.service -n 30 --no-pager
+            exit 13
+          fi
