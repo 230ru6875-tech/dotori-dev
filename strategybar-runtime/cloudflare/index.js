@@ -2,6 +2,7 @@ export { LiveQuotes } from "./live-quotes.js";
 import { applyExternalSessionQuote, fetchMarketSnapshot, STOCKS } from "./market.js";
 import { handleMarketIngest } from "./ingest.js";
 import { createAnalysis, createRuleBasedAnalysis } from "./openai.js";
+import { getCandidates, recordCandidateCycle } from "./candidates.js";
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...headers}});
 const validSymbol = (value) => typeof value === "string" && /^[A-Z0-9.^=-]{1,15}$/.test(value);
@@ -234,6 +235,14 @@ function compactSymbol(row) {
   return {symbol,name,category,price,previousClose,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,trend,reasons,source,provider,asOf,marketState,priceSession,sessionLabel};
 }
 
+async function candidatesGet(request,env) {
+  const url=new URL(request.url);
+  const limit=Math.max(1,Math.min(12,Number(url.searchParams.get("limit")||8)));
+  const snapshot=await getBaseMarket(env,false);
+  const candidates=await getCandidates(env,snapshot,limit);
+  return json({ok:true,asOf:new Date().toISOString(),candidates});
+}
+
 async function analysisGet(request,env) {
   const symbol=(new URL(request.url).searchParams.get("symbol")||"").toUpperCase();
   return json({ok:true,market:await readAnalysis(env,"market"),symbol:validSymbol(symbol)?await readAnalysis(env,`symbol:${symbol}`):null});
@@ -267,6 +276,7 @@ async function scheduledRefresh(env) {
   if (!isUsMarketWindow()) return;
   const baseline=await fetchMarketSnapshot(); await putCache(env,"market:base",baseline);
   const snapshot=await applyQuoteLayers(env,baseline);
+  try { await recordCandidateCycle(env,snapshot); } catch {}
   if (!env.OPENAI_API_KEY||!await claimQuota(env)) return;
   const input={kind:"market_brief",...compactMarket(snapshot)};
   let analysis;
@@ -293,6 +303,7 @@ export default {
       }
       if (request.method==="POST"&&url.pathname==="/api/market-ingest") return await handleMarketIngest(request,env);
       if (request.method==="GET"&&url.pathname==="/api/market") return await marketRoute(request,env);
+      if (request.method==="GET"&&url.pathname==="/api/candidates") return await candidatesGet(request,env);
       if (request.method==="GET"&&url.pathname==="/api/analysis") return await analysisGet(request,env);
       if (request.method==="POST"&&url.pathname==="/api/analysis") return await analysisPost(request,env);
       if (request.method==="GET"&&url.pathname==="/robots.txt") return new Response("User-agent: *\nDisallow: /\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=86400"}});
