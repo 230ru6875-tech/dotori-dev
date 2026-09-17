@@ -69,7 +69,7 @@ jobs:
           NHPLUG_AUTH_URL=https://api.nhplug.com:8443
           MARKET_INGEST_SECRET=${INGEST}
           STRATEGYBAR_TARGET_URL=${TARGET_URL}
-          STRATEGYBAR_NAMUH_SYMBOLS=SNDK,IONQ,AVGO,ORCL,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,VRT,IREN,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,COIN
+          STRATEGYBAR_NAMUH_SYMBOLS=SNDK,IONQ,AVGO,ORCL
           EOF
           echo 'NAMUH credentials prepared without printing secret values.'
 
@@ -114,9 +114,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo journalctl -u strategybar-namuh.service -n 120 --no-pager | tee /tmp/namuh-live.log
+          STARTED_AT=$(sudo systemctl show strategybar-namuh.service -p ActiveEnterTimestamp --value)
+          sudo journalctl -u strategybar-namuh.service --since "$STARTED_AT" --no-pager | tee /tmp/namuh-live.log
+
           if grep -q 'WSS10013\|IGW40031\|Missing MARKET_INGEST_SECRET\|subscription error' /tmp/namuh-live.log; then
-            echo 'NAMUH collector has a permission/configuration error.'
+            echo 'NAMUH collector has a current permission/configuration error.'
             exit 20
           fi
           if ! grep -q 'NAMUH collector starting' /tmp/namuh-live.log; then
@@ -142,6 +144,11 @@ jobs:
             if [ "$count" -gt 0 ]; then break; fi
             sleep 5
           done
+
+          if grep -q 'NAMUH ingest failed' /tmp/namuh-live.log; then
+            echo 'NAMUH realtime is connected, but StrategyBar ingest is still failing. See the HTTP response body above.'
+            exit 22
+          fi
           if [ "$count" -eq 0 ]; then
             echo 'No NAMUH quote reached the market API yet. Service remains installed for the next active US session.'
           fi
