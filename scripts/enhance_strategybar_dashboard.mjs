@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 const path='strategybar-runtime/dist/index.html';
 let html=fs.readFileSync(path,'utf8');
@@ -17,7 +18,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-v3">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-v4">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -25,7 +26,6 @@ const injection=String.raw`
     'DGS2':'미 2년물','DGS10':'미 10년물','DGS30':'미 30년물','M04020000':'금 1G 국내시세'
   };
   var order=['^GSPC','^NDX','^SOX','^RUT','^VIX','DX-Y.NYB','KRW=X','CL=F','DGS2','DGS10','DGS30','M04020000'];
-
   function finite(v){return v!==null&&v!==undefined&&v!==''&&Number.isFinite(Number(v));}
   function valueText(row){
     if(!row||!finite(row.value))return '확인불가';
@@ -51,12 +51,13 @@ const injection=String.raw`
     return '—';
   }
   function changeClass(row){
-    var n=/^DGS/.test(row?.key)?Number(row?.changeValue):Number(row?.changePct);
+    var key=row&&row.key?row.key:'';
+    var n=/^DGS/.test(key)?Number(row&&row.changeValue):Number(row&&row.changePct);
     return Number.isFinite(n)?(n>0?'up':n<0?'down':''):'';
   }
   function card(row,key){
     var el=document.createElement('div');el.className='sb-market-repair-card';el.dataset.marketKey=key;
-    var label=document.createElement('div');label.className='sb-market-repair-label';label.textContent=labels[key]||row?.label||row?.name||key;
+    var label=document.createElement('div');label.className='sb-market-repair-label';label.textContent=labels[key]||(row&&(row.label||row.name))||key;
     var value=document.createElement('div');value.className='sb-market-repair-value';value.textContent=valueText(row);
     var change=document.createElement('div');change.className='sb-market-repair-change '+changeClass(row);change.textContent=changeText(row);
     if(key==='^VIX')change.classList.add('sb-vix-reading');
@@ -68,8 +69,8 @@ const injection=String.raw`
     try{
       var r=await fetch('/api/market?force=1&t='+Date.now(),{cache:'no-store'});
       if(!r.ok)return;
-      var data=await r.json();var rows=Array.isArray(data.market)?data.market:[];
-      var byKey={};rows.forEach(function(x){if(x&&x.key)byKey[x.key]=x;});
+      var data=await r.json(),rows=Array.isArray(data.market)?data.market:[],byKey={};
+      rows.forEach(function(x){if(x&&x.key)byKey[x.key]=x;});
       grid.classList.add('sb-market-repaired');grid.replaceChildren();
       order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});
     }catch(e){}
@@ -77,14 +78,31 @@ const injection=String.raw`
   function replaceMarketLabels(){
     if(!document.body)return;
     var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT),node;
-    while((node=walker.nextNode())){var raw=node.nodeValue||'',key=raw.trim();if(Object.prototype.hasOwnProperty.call(labels,key))node.nodeValue=raw.replace(key,labels[key]);}
+    while((node=walker.nextNode())){
+      var raw=node.nodeValue||'',key=raw.trim();
+      if(Object.prototype.hasOwnProperty.call(labels,key))node.nodeValue=raw.replace(key,labels[key]);
+    }
   }
   function start(){replaceMarketLabels();repairMarket();setInterval(repairMarket,15000);setInterval(replaceMarketLabels,2000);}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
 </script>`;
 
-html=html.replace(/<\/head>/i,style+'\n</head>');
-html=html.replace(/<\/body>/i,injection+'\n</body>');
+function insertBeforeLastTag(source,tag,payload){
+  const needle='</'+tag+'>';
+  const pos=source.toLowerCase().lastIndexOf(needle);
+  if(pos<0)throw new Error('closing '+tag+' tag not found');
+  return source.slice(0,pos)+payload+'\n'+source.slice(pos);
+}
+
+const scriptMatch=injection.match(/<script[^>]*>([\s\S]*)<\/script>/i);
+if(!scriptMatch)throw new Error('enhancer script extraction failed');
+const checkPath='/tmp/strategybar-enhancer-check.js';
+fs.writeFileSync(checkPath,scriptMatch[1]);
+execFileSync(process.execPath,['--check',checkPath],{stdio:'inherit'});
+
+html=insertBeforeLastTag(html,'head',style);
+html=insertBeforeLastTag(html,'body',injection);
+if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar market pulse repair v3.');
+console.log('Applied StrategyBar market pulse repair v4 at final head/body tags.');
