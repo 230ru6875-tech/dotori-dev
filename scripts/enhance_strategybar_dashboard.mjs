@@ -33,7 +33,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v4">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v5">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -98,17 +98,25 @@ const injection=String.raw`
     }
     return selected.slice(0,8);
   }
-  function renderCandidates(data){
+  async function fetchLearnedCandidates(){
+    try{
+      var r=await fetch('/api/candidates?limit=8&t='+Date.now(),{cache:'no-store'});
+      if(!r.ok)return null;
+      var data=await r.json();
+      return data&&Array.isArray(data.candidates)?data.candidates:null;
+    }catch(e){return null;}
+  }
+  function renderCandidates(data, learned){
     var grid=document.querySelector('.sb-market-responsive');
     if(!grid||!grid.parentElement)return;
     var panel=document.querySelector('.sb-candidates');
     if(!panel){
       panel=document.createElement('section');panel.className='sb-candidates';
-      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수·신호 기준 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
+      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수 + 과거 후보 성과 반영 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
       grid.parentElement.insertBefore(panel,grid);
     }
     var list=panel.querySelector('.sb-candidates-grid');
-    var picks=buildCandidates(data);
+    var picks=Array.isArray(learned)&&learned.length?learned:buildCandidates(data);
     list.replaceChildren();
     picks.forEach(function(r){
       var el=document.createElement('div');el.className='sb-candidate';el.dataset.candidateSymbol=r.symbol;
@@ -117,11 +125,12 @@ const injection=String.raw`
       var pctText=Number.isFinite(pct)?((pct>0?'+':'')+pct.toFixed(2)+'%'):'--';
       el.innerHTML='<div class="sb-candidate-top"><span class="sb-candidate-symbol"></span><span class="sb-candidate-score"></span></div><div class="sb-candidate-price"></div><div class="sb-candidate-meta"><span class="sb-candidate-change '+cls+'"></span> · <span class="sb-candidate-signal"></span> · <span class="sb-candidate-provider"></span></div>';
       el.querySelector('.sb-candidate-symbol').textContent=r.symbol;
-      el.querySelector('.sb-candidate-score').textContent='점수 '+Number(r.score).toFixed(0);
+      var shownScore=finite(r.adjustedScore)?Number(r.adjustedScore):Number(r.score);
+      el.querySelector('.sb-candidate-score').textContent='점수 '+shownScore.toFixed(0)+(finite(r.penaltyScore)&&Number(r.penaltyScore)>0?' (-'+Number(r.penaltyScore).toFixed(1)+')':'');
       el.querySelector('.sb-candidate-price').textContent=quotePriceText(r);
       el.querySelector('.sb-candidate-change').textContent=pctText;
-      el.querySelector('.sb-candidate-signal').textContent=r.signal||'후보';
-      el.querySelector('.sb-candidate-provider').textContent=r.provider||'';
+      el.querySelector('.sb-candidate-signal').textContent=(r.signal||'후보')+(r.verdict?' · '+r.verdict:'');
+      el.querySelector('.sb-candidate-provider').textContent=(r.provider||'')+(finite(r.avgReturnPct)?' · 누적 '+(Number(r.avgReturnPct)>0?'+':'')+Number(r.avgReturnPct).toFixed(2)+'%':'');
       list.appendChild(el);
     });
   }
@@ -227,7 +236,8 @@ const injection=String.raw`
         grid.replaceChildren();
         order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});
       }
-      renderCandidates(data);
+      var learned=await fetchLearnedCandidates();
+      renderCandidates(data,learned);
       var symbols=Object.keys(data.symbols||{});symbols.forEach(function(s){applyQuote(data.symbols[s]);});
       if(!liveState.socket||liveState.socket.readyState>1){connectLive(symbols);}
       else if(symbols.join(',')!==liveState.symbols.join(',')){liveState.symbols=symbols.slice(0,50);try{liveState.socket.send(JSON.stringify({type:'subscribe',symbols:liveState.symbols}));}catch(e){}}
@@ -263,4 +273,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v4 with buy candidates.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v5 with learned buy candidates.');
