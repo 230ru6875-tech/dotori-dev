@@ -1,0 +1,144 @@
+name: StrategyBar NAMUH Live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'strategybar-live/namuh-collector.py'
+      - '.github/workflows/strategybar-namuh-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategybar-namuh-live
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: self-hosted
+    env:
+      NHPLUG_APP_KEY: ${{ secrets.NHPLUG_APP_KEY }}
+      NHPLUG_APP_SECRET: ${{ secrets.NHPLUG_APP_SECRET }}
+      TARGET_URL: https://strategybar.hnr2020.workers.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare NAMUH credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXISTING=/etc/strategybar-namuh.env
+          KEY='${NHPLUG_APP_KEY:-}'
+          SECRET='${NHPLUG_APP_SECRET:-}'
+          INGEST=''
+
+          if sudo test -f "$EXISTING"; then
+            if [ -z "$KEY" ]; then KEY=$(sudo sed -n 's/^NHPLUG_APP_KEY=//p' "$EXISTING" | head -n1); fi
+            if [ -z "$SECRET" ]; then SECRET=$(sudo sed -n 's/^NHPLUG_APP_SECRET=//p' "$EXISTING" | head -n1); fi
+            INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' "$EXISTING" | head -n1)
+          fi
+          if [ -z "$INGEST" ] && sudo test -f /etc/strategybar-alpaca.env; then
+            INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' /etc/strategybar-alpaca.env | head -n1)
+          fi
+          if [ -z "$INGEST" ] && sudo test -f /etc/strategybar-kis.env; then
+            INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' /etc/strategybar-kis.env | head -n1)
+          fi
+
+          if [ -z "$KEY" ] || [ -z "$SECRET" ]; then
+            echo 'NHPLUG_APP_KEY / NHPLUG_APP_SECRET are not configured in GitHub Actions secrets or the existing EC2 NAMUH environment.'
+            exit 12
+          fi
+          if [ -z "$INGEST" ]; then
+            echo 'MARKET_INGEST_SECRET was not found on EC2.'
+            exit 13
+          fi
+
+          sudo install -d -m 0755 /opt/strategybar-namuh
+          sudo install -m 0644 strategybar-live/namuh-collector.py /opt/strategybar-namuh/namuh-collector.py
+          sudo bash -c 'umask 077; cat > /etc/strategybar-namuh.env' <<EOF
+          NHPLUG_APP_KEY=${KEY}
+          NHPLUG_APP_SECRET=${SECRET}
+          NHPLUG_BASE_URL=https://api.nhplug.com:8443
+          NHPLUG_AUTH_URL=https://api.nhplug.com:8443
+          MARKET_INGEST_SECRET=${INGEST}
+          STRATEGYBAR_TARGET_URL=${TARGET_URL}
+          STRATEGYBAR_NAMUH_SYMBOLS=SNDK,IONQ,AVGO,ORCL,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,VRT,IREN,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,COIN
+          EOF
+          echo 'NAMUH credentials prepared without printing secret values.'
+
+      - name: Install NAMUH SDK and service
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo python3 -m venv /opt/strategybar-namuh/.venv
+          sudo /opt/strategybar-namuh/.venv/bin/python -m pip install --upgrade pip >/dev/null
+          sudo /opt/strategybar-namuh/.venv/bin/python -m pip install 'nhplug>=0.2.1' >/dev/null
+
+          sudo tee /etc/systemd/system/strategybar-namuh.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=StrategyBar NAMUH PLUG overseas realtime collector
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/strategybar-namuh
+          EnvironmentFile=/etc/strategybar-namuh.env
+          ExecStart=/opt/strategybar-namuh/.venv/bin/python /opt/strategybar-namuh/namuh-collector.py
+          Restart=always
+          RestartSec=3
+          NoNewPrivileges=true
+          PrivateTmp=true
+          LimitNOFILE=65536
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now strategybar-namuh.service
+          sudo systemctl restart strategybar-namuh.service
+          sleep 12
+          sudo systemctl is-active --quiet strategybar-namuh.service
+          echo 'strategybar-namuh.service is active.'
+
+      - name: Validate NAMUH realtime and StrategyBar ingest
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo journalctl -u strategybar-namuh.service -n 120 --no-pager | tee /tmp/namuh-live.log
+          if grep -q 'WSS10013\|Missing MARKET_INGEST_SECRET\|subscription error' /tmp/namuh-live.log; then
+            echo 'NAMUH collector has a permission/configuration error.'
+            exit 20
+          fi
+          if ! grep -q 'NAMUH collector starting' /tmp/namuh-live.log; then
+            echo 'NAMUH collector did not start correctly.'
+            exit 21
+          fi
+
+          count=0
+          for i in $(seq 1 12); do
+            curl -fsSL "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/market-namuh.json || true
+            count=$(python3 - <<'PY'
+          import json
+          try:
+              with open('/tmp/market-namuh.json', encoding='utf-8') as f:
+                  x=json.load(f)
+              rows=(x.get('symbols') or {}).values()
+              print(sum(1 for r in rows if str((r or {}).get('provider','')).upper()=='NAMUH'))
+          except Exception:
+              print(0)
+          PY
+            )
+            echo "NAMUH-backed symbols=${count}"
+            if [ "$count" -gt 0 ]; then break; fi
+            sleep 5
+          done
+          if [ "$count" -eq 0 ]; then
+            echo 'No NAMUH quote reached the market API yet. Service remains installed for the next active US session.'
+          fi
