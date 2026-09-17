@@ -16,6 +16,29 @@ export class LiveQuotes {
     this.env = env;
   }
 
+  async latestQuotes(symbols) {
+    if (!this.env.DB || !symbols.length) return [];
+    try {
+      const placeholders = symbols.map(() => "?").join(",");
+      const result = await this.env.DB.prepare(
+        `SELECT symbol,payload,received_at FROM broker_quotes WHERE symbol IN (${placeholders})`
+      ).bind(...symbols).all();
+      return (result.results || []).map((row) => {
+        try {
+          return { ...JSON.parse(row.payload), receivedAt: new Date(Number(row.received_at)).toISOString() };
+        } catch { return null; }
+      }).filter(Boolean);
+    } catch { return []; }
+  }
+
+  async sendSnapshot(ws, symbols) {
+    const quotes = await this.latestQuotes(symbols);
+    if (!quotes.length) return;
+    try {
+      ws.send(JSON.stringify({ type: "snapshot", quotes, at: new Date().toISOString() }));
+    } catch { }
+  }
+
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/connect") {
@@ -26,6 +49,7 @@ export class LiveQuotes {
       server.serializeAttachment({ symbols });
       this.ctx.acceptWebSocket(server);
       server.send(JSON.stringify({ type: "ready", symbols, at: new Date().toISOString() }));
+      await this.sendSnapshot(server, symbols);
       return new Response(null, { status: 101, webSocket: client });
     }
 
@@ -58,6 +82,11 @@ export class LiveQuotes {
       const symbols = parseSymbols(body.symbols);
       ws.serializeAttachment({ symbols });
       ws.send(JSON.stringify({ type: "subscribed", symbols, at: new Date().toISOString() }));
+      await this.sendSnapshot(ws, symbols);
+      return;
+    }
+    if (body?.type === "ping") {
+      try { ws.send(JSON.stringify({ type: "pong", at: new Date().toISOString() })); } catch { }
     }
   }
 
