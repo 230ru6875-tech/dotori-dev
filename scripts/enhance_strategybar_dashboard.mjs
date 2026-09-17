@@ -155,7 +155,11 @@ const injection=String.raw`
       if(!r.ok)return;
       var data=await r.json(),rows=Array.isArray(data.market)?data.market:[],byKey={};
       rows.forEach(function(x){if(x&&x.key)byKey[x.key]=x;});
-      if(grid){grid.classList.add('sb-market-repaired');grid.replaceChildren();order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});
+      if(grid){
+        grid.classList.add('sb-market-repaired');
+        grid.replaceChildren();
+        order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});
+      }
       var symbols=Object.keys(data.symbols||{});symbols.forEach(function(s){applyQuote(data.symbols[s]);});
       if(!liveState.socket||liveState.socket.readyState>1){connectLive(symbols);}
       else if(symbols.join(',')!==liveState.symbols.join(',')){liveState.symbols=symbols.slice(0,50);try{liveState.socket.send(JSON.stringify({type:'subscribe',symbols:liveState.symbols}));}catch(e){}}
