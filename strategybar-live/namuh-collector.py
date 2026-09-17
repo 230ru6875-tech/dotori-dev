@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import os
-import queue
 import threading
 import time
 from datetime import datetime
@@ -14,7 +13,7 @@ from nhplug.realtime import subscribe
 
 TARGET_URL = os.getenv("STRATEGYBAR_TARGET_URL", "https://strategybar.hnr2020.workers.dev").rstrip("/")
 INGEST_SECRET = os.getenv("MARKET_INGEST_SECRET", "")
-DEFAULT_SYMBOLS = "SNDK,IONQ,AVGO,ORCL,NVDA,AMD,TSM,ASML,MU,ARM,PLTR,VRT,IREN,RKLB,ASTS,QBTS,RGTI,OKLO,SMR,COIN"
+DEFAULT_SYMBOLS = "SNDK,IONQ,AVGO,ORCL"
 SYMBOLS = list(dict.fromkeys(x.strip().upper() for x in os.getenv("STRATEGYBAR_NAMUH_SYMBOLS", DEFAULT_SYMBOLS).split(",") if x.strip()))[:20]
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -127,14 +126,18 @@ def _sign_and_post(quotes):
             "Content-Type": "application/json",
             "x-strategybar-timestamp": ts,
             "x-strategybar-signature": sig,
-            "User-Agent": "strategybar-namuh/1.0",
+            "User-Agent": "strategybar-namuh/1.1",
         },
     )
-    with request.urlopen(req, timeout=10) as response:
-        payload = response.read().decode("utf-8", "replace")
-        if response.status >= 300:
-            raise RuntimeError(f"ingest HTTP {response.status}: {payload[:300]}")
-        return payload
+    try:
+        with request.urlopen(req, timeout=10) as response:
+            payload = response.read().decode("utf-8", "replace")
+            if response.status >= 300:
+                raise RuntimeError(f"ingest HTTP {response.status}: {payload[:500]}")
+            return payload
+    except error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"ingest HTTP {exc.code}: {body[:1000]}") from exc
 
 
 def _flush_worker():
