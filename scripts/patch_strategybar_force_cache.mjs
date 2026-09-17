@@ -22,9 +22,9 @@ if (!changed && !text.includes('if (cached && !force && age<60000)')) {
   throw new Error('StrategyBar cache condition not found');
 }
 
-text=text.replaceAll('"market:base"','"market:base:v4"');
-text=text.replaceAll('"market:base:v2"','"market:base:v4"');
-text=text.replaceAll('"market:base:v3"','"market:base:v4"');
+for (const oldKey of ['"market:base"','"market:base:v2"','"market:base:v3"','"market:base:v4"']) {
+  text=text.replaceAll(oldKey,'"market:base:v5"');
+}
 
 const brokerGuard='if (!quotes[row.key]) return row;';
 const brokerGuardReplacement="if (!quotes[row.key]) return row;\n    if (['DGS2','DGS10','DGS30'].includes(row.key) && String(row.provider||'')==='Npay 증권') return row;";
@@ -60,7 +60,23 @@ const resilient=`async function resilientVix(){
       if(finite(row.value)&&row.value>5&&row.value<100)return{...row,source:'Yahoo Finance VIX',provider:'Yahoo',providerPriority:2};
     }catch{}
   }
-  throw new Error('VIX Yahoo intraday/daily providers unavailable');
+  try{
+    const r=await fetch('https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS',{headers:{'user-agent':'Mozilla/5.0 StrategyBar/1.0','accept':'text/csv,text/plain,*/*','cache-control':'no-cache'}});
+    if(r.ok){
+      const csv=await r.text();
+      const points=[];
+      for(const line of csv.trim().split('\\n').slice(1)){
+        const [date,raw]=line.trim().split(',');
+        const value=Number(raw);
+        if(date&&Number.isFinite(value)&&value>5&&value<100)points.push({date,value});
+      }
+      if(points.length){
+        const latest=points.at(-1),prev=points.length>1?points.at(-2):null;
+        return {key:'^VIX',label:'VIX',name:'VIX',unit:'index',value:round(latest.value,2),previousClose:prev?round(prev.value,2):null,changeValue:prev?round(latest.value-prev.value,2):null,changePct:prev&&prev.value?round((latest.value/prev.value-1)*100,2):null,asOf:latest.date,source:'FRED VIXCLS (CBOE daily close)',provider:'FRED/CBOE',providerPriority:3,priceSession:'DAILY_CLOSE',sessionLabel:'전일 종가'};
+      }
+    }
+  }catch{}
+  throw new Error('VIX Yahoo and FRED providers unavailable');
 }
 `;
 market=market.slice(0,start)+resilient+market.slice(end);
@@ -69,4 +85,4 @@ fs.writeFileSync(marketPath,market);
 for (const file of [marketPath,indexPath]) {
   execFileSync(process.execPath,['--check',file],{stdio:'inherit'});
 }
-console.log('Patched StrategyBar cache, protected Npay Treasury yields, hardened VIX fallback, and syntax-checked Worker code.');
+console.log('Patched StrategyBar cache v5, protected Npay Treasury yields, added FRED VIX fallback, and syntax-checked Worker code.');
