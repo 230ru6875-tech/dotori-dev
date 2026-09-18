@@ -53,8 +53,9 @@ def load_state():
         s={}
     s.setdefault("mode",MODE)
     s.setdefault("profile",PROFILE)
-    s.setdefault("broker",BROKER_MODE if BROKER_MODE in ("AUTO",)+BROKERS else "NAMUH")
-    s.setdefault("activeBroker",None)
+    desired_broker=BROKER_MODE if BROKER_MODE in ("AUTO",)+BROKERS else "NAMUH"
+    s["broker"]=desired_broker
+    s["activeBroker"]=desired_broker if desired_broker in BROKERS else s.get("activeBroker")
     s.setdefault("startKrw",START_KRW)
     s.setdefault("targetKrw",TARGET_KRW)
     s.setdefault("cashKrw",START_KRW)
