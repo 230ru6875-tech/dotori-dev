@@ -6,6 +6,9 @@ const SIGNAL_PRIORITY={주목:3,관찰:2,대기:1,주의:0};
 function rawCandidates(snapshot, limit=8){
   const rows=Object.values(snapshot?.symbols||{}).filter(r=>r&&finite(r.price)&&finite(r.score)&&String(r.signal||'')!=='주의');
   rows.sort((a,b)=>{
+    const tb=(String(b.turtleSignal||'')==='20일 돌파'?2:String(b.maStack||'')==='정배열'?1:0);
+    const ta=(String(a.turtleSignal||'')==='20일 돌파'?2:String(a.maStack||'')==='정배열'?1:0);
+    if(tb!==ta)return tb-ta;
     const p=(SIGNAL_PRIORITY[String(b.signal||'')]||0)-(SIGNAL_PRIORITY[String(a.signal||'')]||0);
     return p||Number(b.score)-Number(a.score);
   });
