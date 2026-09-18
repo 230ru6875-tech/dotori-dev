@@ -34,11 +34,22 @@ const style=String.raw`
 .sb-candidate-badge.good{color:#86efac;border-color:rgba(134,239,172,.35)}
 .sb-candidate-badge.bad{color:#fca5a5;border-color:rgba(252,165,165,.35)}
 .sb-candidate-change.up{color:#fb7185}.sb-candidate-change.down{color:#60a5fa}
+.sb-detail{margin:10px 0 12px;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:10px;background:rgba(8,12,18,.55)}
+.sb-detail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.sb-detail-title{font-size:14px;font-weight:800;color:#f8fafc}.sb-detail-controls{display:flex;gap:5px;flex-wrap:wrap}
+.sb-detail-btn{font-size:10px;padding:4px 7px;border:1px solid rgba(148,163,184,.25);border-radius:6px;background:#111827;color:#cbd5e1;cursor:pointer}
+.sb-detail-btn.active{border-color:rgba(96,165,250,.8);color:#fff}
+.sb-detail-chart-wrap{overflow-x:auto}.sb-detail-chart{width:100%;min-width:720px;height:300px;display:block}
+.sb-detail-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:10px;color:#cbd5e1;margin:6px 0}
+.sb-detail-metrics{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.sb-detail-metric{font-size:10px;border:1px solid rgba(148,163,184,.18);border-radius:7px;padding:5px 7px;color:#cbd5e1}
+.sb-detail-rs{margin-top:8px}.sb-detail-rs svg{width:100%;height:90px;display:block}
+.sb-candidate{cursor:pointer}
 @keyframes sbQuoteFlash{0%{background:rgba(59,130,246,.18)}100%{background:transparent}}
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v6">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v7">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -141,6 +152,7 @@ const injection=String.raw`
       if(r.maStack)badges.push({text:'MA '+r.maStack,cls:r.maStack==='정배열'?'good':r.maStack==='역배열'?'bad':''});
       if(r.turtleSignal)badges.push({text:'터틀 '+r.turtleSignal,cls:r.turtleSignal==='20일 돌파'?'hot':r.turtleSignal==='10일 이탈'?'bad':''});
       badges.forEach(function(b){var x=document.createElement('span');x.className='sb-candidate-badge '+b.cls;x.textContent=b.text;strategy.appendChild(x);});
+      el.addEventListener('click',function(){loadDetail(r.symbol,'QQQ');});
       list.appendChild(el);
     });
   }
@@ -155,6 +167,74 @@ const injection=String.raw`
       change.className='sb-candidate-change '+(Number.isFinite(pct)?(pct>0?'up':pct<0?'down':''):'');
     }
     var provider=el.querySelector('.sb-candidate-provider');if(provider&&q.provider)provider.textContent=q.provider;
+  }
+  function ensureDetailPanel(){
+    var candidates=document.querySelector('.sb-candidates');
+    if(!candidates||!candidates.parentElement)return null;
+    var panel=document.querySelector('.sb-detail');
+    if(panel)return panel;
+    panel=document.createElement('section');panel.className='sb-detail';
+    panel.innerHTML='<div class="sb-detail-head"><div class="sb-detail-title">종목 상세</div><div class="sb-detail-controls"><button class="sb-detail-btn active" data-benchmark="QQQ">QQQ 대비</button><button class="sb-detail-btn" data-benchmark="SPY">SPY 대비</button><button class="sb-detail-btn" data-benchmark="SMH">SMH 대비</button></div></div><div class="sb-detail-legend">종가 · MA5 · MA20 · MA60 · MA120 · 터틀20일고점 · 터틀10일저점</div><div class="sb-detail-chart-wrap"><svg class="sb-detail-chart" viewBox="0 0 1000 300" preserveAspectRatio="none"></svg></div><div class="sb-detail-metrics"></div><div class="sb-detail-rs"><svg viewBox="0 0 1000 90" preserveAspectRatio="none"></svg></div>';
+    candidates.parentElement.insertBefore(panel,candidates.nextSibling);
+    panel.querySelectorAll('.sb-detail-btn').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        panel.querySelectorAll('.sb-detail-btn').forEach(function(x){x.classList.remove('active');});
+        btn.classList.add('active');
+        var symbol=panel.dataset.symbol;if(symbol)loadDetail(symbol,btn.dataset.benchmark||'QQQ');
+      });
+    });
+    return panel;
+  }
+  function polylinePoints(rows,key,w,h,pad,min,max){
+    var pts=[];
+    rows.forEach(function(r,i){
+      var v=Number(r&&r[key]);if(!Number.isFinite(v))return;
+      var x=pad+(w-pad*2)*(i/Math.max(1,rows.length-1));
+      var y=h-pad-(h-pad*2)*((v-min)/Math.max(1e-9,max-min));
+      pts.push(x.toFixed(1)+','+y.toFixed(1));
+    });
+    return pts.join(' ');
+  }
+  function renderDetail(payload){
+    var panel=ensureDetailPanel();if(!panel)return;
+    var rows=(payload&&payload.rows)||[],svg=panel.querySelector('.sb-detail-chart');
+    if(!rows.length){svg.innerHTML='';return;}
+    var keys=['close','ma5','ma20','ma60','ma120','turtle20High','turtle10Low'],vals=[];
+    rows.forEach(function(r){keys.forEach(function(k){var v=Number(r[k]);if(Number.isFinite(v))vals.push(v);});});
+    var min=Math.min.apply(null,vals),max=Math.max.apply(null,vals),padRange=(max-min)*0.05||1;min-=padRange;max+=padRange;
+    var defs=[
+      ['close','#f8fafc',2.4],['ma5','#fbbf24',1.5],['ma20','#60a5fa',1.5],['ma60','#34d399',1.5],['ma120','#c084fc',1.5],
+      ['turtle20High','#fb7185',1.2],['turtle10Low','#94a3b8',1.2]
+    ];
+    var html='<rect x="0" y="0" width="1000" height="300" fill="transparent"/>';
+    for(var g=0;g<5;g++){var y=20+(260/4)*g;html+='<line x1="40" y1="'+y+'" x2="990" y2="'+y+'" stroke="rgba(148,163,184,.12)" stroke-width="1"/>';}
+    defs.forEach(function(d){var p=polylinePoints(rows,d[0],1000,300,40,min,max);if(p)html+='<polyline points="'+p+'" fill="none" stroke="'+d[1]+'" stroke-width="'+d[2]+'" vector-effect="non-scaling-stroke"/>';});
+    svg.innerHTML=html;
+    var m=payload.metrics||{},metrics=panel.querySelector('.sb-detail-metrics');
+    function pct(v){return Number.isFinite(Number(v))?((Number(v)>0?'+':'')+Number(v).toFixed(2)+'%'):'--';}
+    metrics.innerHTML='<span class="sb-detail-metric">MA '+(m.maStack||'확인 중')+'</span><span class="sb-detail-metric">터틀 '+(m.turtleSignal||'대기')+'</span><span class="sb-detail-metric">20일 '+pct(m.return20)+'</span><span class="sb-detail-metric">'+payload.benchmark+' 대비 20일 '+pct(m.relativeReturn20)+'</span><span class="sb-detail-metric">60일 '+pct(m.return60)+'</span><span class="sb-detail-metric">'+payload.benchmark+' 대비 60일 '+pct(m.relativeReturn60)+'</span><span class="sb-detail-metric">상대강도 '+(Number.isFinite(Number(m.relativeStrength))?Number(m.relativeStrength).toFixed(1):'--')+'</span>';
+    var rsSvg=panel.querySelector('.sb-detail-rs svg'),rsVals=rows.map(function(r){return Number(r.relativeStrength);}).filter(Number.isFinite);
+    if(rsVals.length){
+      var rmin=Math.min.apply(null,rsVals.concat([100])),rmax=Math.max.apply(null,rsVals.concat([100])),rpad=(rmax-rmin)*.1||1;rmin-=rpad;rmax+=rpad;
+      var points=polylinePoints(rows,'relativeStrength',1000,90,16,rmin,rmax);
+      var baseY=90-16-(90-32)*((100-rmin)/Math.max(1e-9,rmax-rmin));
+      rsSvg.innerHTML='<line x1="16" y1="'+baseY+'" x2="990" y2="'+baseY+'" stroke="rgba(148,163,184,.35)" stroke-dasharray="5 4"/><polyline points="'+points+'" fill="none" stroke="#60a5fa" stroke-width="2" vector-effect="non-scaling-stroke"/>';
+    }else rsSvg.innerHTML='';
+  }
+  async function loadDetail(symbol,benchmark){
+    var panel=ensureDetailPanel();if(!panel)return;
+    panel.dataset.symbol=symbol;panel.querySelector('.sb-detail-title').textContent=symbol+' 상세 추세';
+    try{
+      var r=await fetch('/api/history?symbol='+encodeURIComponent(symbol)+'&benchmark='+encodeURIComponent(benchmark||'QQQ')+'&range=6mo&t='+Date.now(),{cache:'no-store'});
+      if(!r.ok)throw new Error('history');
+      var data=await r.json();if(data&&data.ok)renderDetail(data);
+    }catch(e){panel.querySelector('.sb-detail-title').textContent=symbol+' 상세 추세 · 데이터 오류';}
+  }
+  function bindDetailOpen(host,symbol){
+    if(!host||host.dataset.sbDetailBound)return;
+    host.dataset.sbDetailBound='1';
+    host.style.cursor='pointer';
+    host.addEventListener('click',function(){loadDetail(symbol,'QQQ');});
   }
   function statusEl(){
     var el=document.querySelector('.sb-live-status');
@@ -196,6 +276,7 @@ const injection=String.raw`
     if(isLive)liveState.liveSeen[symbol]=Math.max(Date.now(),seenAt);
     if(!isLive && liveState.liveSeen[symbol] && Date.now()-liveState.liveSeen[symbol]<LIVE_FRESH_MS)return;
     var host=findCardForSymbol(symbol);if(!host)return;
+    bindDetailOpen(host,symbol);
     replaceProviderLabel(host,isLive?(q.provider||provider):'Yahoo');
     var box=host.querySelector('.sb-live-quote');
     if(!box){
@@ -283,4 +364,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v6 with MA and Turtle signals.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v7 with detail chart and relative strength.');
