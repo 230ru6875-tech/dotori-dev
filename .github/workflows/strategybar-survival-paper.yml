@@ -33,25 +33,42 @@ jobs:
           sudo install -d -m 0755 /var/lib/strategybar-survival
           sudo install -m 0644 strategybar-live/survival-paper-bot.py /opt/strategybar-survival/survival-paper-bot.py
 
+          INGEST=''
+          for src in /etc/strategybar-namuh.env /etc/strategybar-kis.env /etc/strategybar-alpaca.env; do
+            if [ -z "$INGEST" ] && sudo test -f "$src"; then
+              INGEST=$(sudo sed -n 's/^MARKET_INGEST_SECRET=//p' "$src" | head -n1)
+            fi
+          done
+          if [ -z "$INGEST" ]; then
+            echo 'MARKET_INGEST_SECRET not found on EC2.'
+            exit 21
+          fi
+
           sudo tee /etc/strategybar-survival.env >/dev/null <<EOF
           STRATEGYBAR_TARGET_URL=${TARGET_URL}
           SURVIVAL_STATE_PATH=/var/lib/strategybar-survival/state.json
           SURVIVAL_TRADES_PATH=/var/lib/strategybar-survival/trades.jsonl
+          MARKET_INGEST_SECRET=${INGEST}
+          SURVIVAL_PROFILE=FAST_SURVIVAL
+          SURVIVAL_BROKER=AUTO
           SURVIVAL_START_KRW=100000
+          SURVIVAL_TARGET_KRW=1000000
           SURVIVAL_POLL_SECONDS=30
-          SURVIVAL_MAX_POSITIONS=2
-          SURVIVAL_MAX_POSITION_PCT=0.35
-          SURVIVAL_RISK_PER_TRADE=0.01
-          SURVIVAL_DAILY_LOSS_LIMIT=0.02
-          SURVIVAL_MAX_DRAWDOWN=0.08
-          SURVIVAL_HARD_KILL_DRAWDOWN=0.12
+          SURVIVAL_MAX_POSITIONS=3
+          SURVIVAL_MAX_POSITION_PCT=0.40
+          SURVIVAL_RISK_PER_TRADE=0.015
+          SURVIVAL_MAX_RISK_PER_TRADE=0.020
+          SURVIVAL_DAILY_LOSS_LIMIT=0.03
+          SURVIVAL_MAX_DRAWDOWN=0.10
+          SURVIVAL_HARD_KILL_DRAWDOWN=0.15
           SURVIVAL_BASE_STOP_PCT=0.035
-          SURVIVAL_TAKE_PROFIT_PCT=0.07
-          SURVIVAL_TRAIL_START_PCT=0.04
-          SURVIVAL_TRAIL_GAP_PCT=0.03
-          SURVIVAL_ENTRY_SCORE=72
-          SURVIVAL_ENTRY_RISK_HEAD=55
-          SURVIVAL_ENTRY_REL_HEAD=55
+          SURVIVAL_TAKE_PROFIT_PCT=0.10
+          SURVIVAL_TRAIL_START_PCT=0.05
+          SURVIVAL_TRAIL_GAP_PCT=0.04
+          SURVIVAL_ENTRY_SCORE=68
+          SURVIVAL_ENTRY_RISK_HEAD=52
+          SURVIVAL_ENTRY_REL_HEAD=52
+          SURVIVAL_MIN_PATTERN_SUCCESS=0.50
           EOF
 
           sudo tee /etc/systemd/system/strategybar-survival-paper.service >/dev/null <<'UNIT'
@@ -103,5 +120,8 @@ jobs:
           assert float(x.get('equityKrw',0))>0
           assert float(x.get('cashKrw',0))>=0
           assert x.get('lastCycle')
-          print('paper-bot validation ok', x.get('equityKrw'), x.get('positions'))
+          assert x.get('profile')=='FAST_SURVIVAL'
+          assert x.get('activeBroker') in ('NAMUH','KIS','TOSS')
+          assert float(x.get('targetKrw',0))==1000000
+          print('paper-bot validation ok', x.get('equityKrw'), x.get('positions'), 'broker', x.get('activeBroker'), 'progress', x.get('progressPct'))
           PY
