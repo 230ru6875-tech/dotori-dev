@@ -228,7 +228,7 @@ jobs:
           }
           NODE
 
-      - name: Validate dashboard page
+      - name: Validate dashboard and investment page
         shell: bash
         run: |
           set -euo pipefail
@@ -236,4 +236,18 @@ jobs:
           test -s /tmp/strategybar-page.html
           grep -q '<html' /tmp/strategybar-page.html
           grep -q 'strategybar-enhancer-script' /tmp/strategybar-page.html
-          echo "StrategyBar production page is reachable and enhanced UI is present."
+          grep -q '/investment.html' /tmp/strategybar-page.html
+
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/investment.html?t=$(date +%s)" -o /tmp/strategybar-investment.html
+          test -s /tmp/strategybar-investment.html
+          grep -q '<title>StrategyBar 투자실험</title>' /tmp/strategybar-investment.html
+          grep -q '/api/survival' /tmp/strategybar-investment.html
+
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/survival?t=$(date +%s)" -o /tmp/strategybar-survival.json
+          node - <<'NODE'
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync('/tmp/strategybar-survival.json','utf8'));
+          if(!p.ok) throw new Error('survival api ok=false');
+          console.log('Investment page and survival API validated.', p.state?.activeBroker||p.state?.broker||'no-state-yet');
+          NODE
+          echo "StrategyBar dashboard and standalone investment page are reachable."
