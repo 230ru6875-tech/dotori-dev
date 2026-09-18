@@ -50,7 +50,7 @@ jobs:
           SURVIVAL_TRADES_PATH=/var/lib/strategybar-survival/trades.jsonl
           MARKET_INGEST_SECRET=${INGEST}
           SURVIVAL_PROFILE=FAST_SURVIVAL
-          SURVIVAL_BROKER=AUTO
+          SURVIVAL_BROKER=NAMUH
           SURVIVAL_START_KRW=100000
           SURVIVAL_TARGET_KRW=1000000
           SURVIVAL_POLL_SECONDS=30
@@ -121,7 +121,8 @@ jobs:
           assert float(x.get('cashKrw',0))>=0
           assert x.get('lastCycle')
           assert x.get('profile')=='FAST_SURVIVAL'
-          assert x.get('activeBroker') in ('NAMUH','KIS','TOSS')
+          assert x.get('broker')=='NAMUH'
+          assert x.get('activeBroker')=='NAMUH'
           assert float(x.get('targetKrw',0))==1000000
           print('paper-bot validation ok', x.get('equityKrw'), x.get('positions'), 'broker', x.get('activeBroker'), 'progress', x.get('progressPct'))
           PY
