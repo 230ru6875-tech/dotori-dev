@@ -180,6 +180,7 @@ jobs:
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?force=1&t=$(date +%s)" -o /tmp/strategybar-market.json
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=SNDK&force=1&t=$(date +%s)" -o /tmp/strategybar-sndk.json
           curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/market?only=IONQ&force=1&t=$(date +%s)" -o /tmp/strategybar-ionq.json
+          curl -fsSL --retry 5 --retry-delay 2 "${TARGET_URL}/api/candidates?limit=8&t=$(date +%s)" -o /tmp/strategybar-candidates.json
           node - <<'NODE'
           const fs = require('fs');
           const base = JSON.parse(fs.readFileSync('/tmp/strategybar-market.json','utf8'));
@@ -202,6 +203,16 @@ jobs:
           if (!base.ok) throw new Error('market api returned ok=false');
           check('SNDK', sndkDirect);
           check('IONQ', ionqDirect);
+
+          const candidatePayload = JSON.parse(fs.readFileSync('/tmp/strategybar-candidates.json','utf8'));
+          if (!candidatePayload.ok || !Array.isArray(candidatePayload.candidates) || !candidatePayload.candidates.length) throw new Error('candidate api missing');
+          const firstCandidate = candidatePayload.candidates[0];
+          for (const key of ['trend','momentum','volume','relative','market','risk']) {
+            if (!Number.isFinite(Number(firstCandidate.headScores?.[key]))) throw new Error(`candidate head missing: ${key}`);
+          }
+          if (!Number.isFinite(Number(firstCandidate.adjustedScore))) throw new Error('candidate adjustedScore missing');
+          if (!firstCandidate.marketRegime) throw new Error('candidate marketRegime missing');
+          console.log(`Candidate: ${firstCandidate.symbol}, adjusted=${firstCandidate.adjustedScore}, regime=${firstCandidate.marketRegime}, patternSamples=${firstCandidate.patternSamples||0}`);
 
           const vix=(base.market||[]).find((item)=>item.key==='^VIX' || String(item.name||item.label||'').toUpperCase()==='VIX');
           if (!vix || !(Number(vix.value) > 0)) throw new Error('VIX market card missing or invalid');
