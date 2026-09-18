@@ -28,12 +28,17 @@ const style=String.raw`
 .sb-candidate-top{display:flex;align-items:center;justify-content:space-between;gap:6px}.sb-candidate-symbol{font-size:13px;font-weight:800;color:#fff}
 .sb-candidate-score{font-size:10px;font-weight:700;color:#93c5fd}.sb-candidate-price{font-size:14px;font-weight:800;color:#f8fafc;margin-top:5px}
 .sb-candidate-meta{font-size:9px;color:#94a3b8;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-candidate-strategy{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.sb-candidate-badge{font-size:9px;padding:2px 5px;border:1px solid rgba(148,163,184,.22);border-radius:999px;color:#cbd5e1}
+.sb-candidate-badge.hot{color:#fde68a;border-color:rgba(253,230,138,.4)}
+.sb-candidate-badge.good{color:#86efac;border-color:rgba(134,239,172,.35)}
+.sb-candidate-badge.bad{color:#fca5a5;border-color:rgba(252,165,165,.35)}
 .sb-candidate-change.up{color:#fb7185}.sb-candidate-change.down{color:#60a5fa}
 @keyframes sbQuoteFlash{0%{background:rgba(59,130,246,.18)}100%{background:transparent}}
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v5">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v6">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -112,7 +117,7 @@ const injection=String.raw`
     var panel=document.querySelector('.sb-candidates');
     if(!panel){
       panel=document.createElement('section');panel.className='sb-candidates';
-      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수 + 과거 후보 성과 반영 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
+      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수 + MA 5/20/60/120 + 터틀 돌파 + 과거성과 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
       grid.parentElement.insertBefore(panel,grid);
     }
     var list=panel.querySelector('.sb-candidates-grid');
@@ -123,7 +128,7 @@ const injection=String.raw`
       var pct=finite(r.changePct)?Number(r.changePct):null;
       var cls=Number.isFinite(pct)?(pct>0?'up':pct<0?'down':''):'';
       var pctText=Number.isFinite(pct)?((pct>0?'+':'')+pct.toFixed(2)+'%'):'--';
-      el.innerHTML='<div class="sb-candidate-top"><span class="sb-candidate-symbol"></span><span class="sb-candidate-score"></span></div><div class="sb-candidate-price"></div><div class="sb-candidate-meta"><span class="sb-candidate-change '+cls+'"></span> · <span class="sb-candidate-signal"></span> · <span class="sb-candidate-provider"></span></div>';
+      el.innerHTML='<div class="sb-candidate-top"><span class="sb-candidate-symbol"></span><span class="sb-candidate-score"></span></div><div class="sb-candidate-price"></div><div class="sb-candidate-meta"><span class="sb-candidate-change '+cls+'"></span> · <span class="sb-candidate-signal"></span> · <span class="sb-candidate-provider"></span></div><div class="sb-candidate-strategy"></div>';
       el.querySelector('.sb-candidate-symbol').textContent=r.symbol;
       var shownScore=finite(r.adjustedScore)?Number(r.adjustedScore):Number(r.score);
       el.querySelector('.sb-candidate-score').textContent='점수 '+shownScore.toFixed(0)+(finite(r.penaltyScore)&&Number(r.penaltyScore)>0?' (-'+Number(r.penaltyScore).toFixed(1)+')':'');
@@ -131,6 +136,11 @@ const injection=String.raw`
       el.querySelector('.sb-candidate-change').textContent=pctText;
       el.querySelector('.sb-candidate-signal').textContent=(r.signal||'후보')+(r.verdict?' · '+r.verdict:'');
       el.querySelector('.sb-candidate-provider').textContent=(r.provider||'')+(finite(r.avgReturnPct)?' · 누적 '+(Number(r.avgReturnPct)>0?'+':'')+Number(r.avgReturnPct).toFixed(2)+'%':'');
+      var strategy=el.querySelector('.sb-candidate-strategy');
+      var badges=[];
+      if(r.maStack)badges.push({text:'MA '+r.maStack,cls:r.maStack==='정배열'?'good':r.maStack==='역배열'?'bad':''});
+      if(r.turtleSignal)badges.push({text:'터틀 '+r.turtleSignal,cls:r.turtleSignal==='20일 돌파'?'hot':r.turtleSignal==='10일 이탈'?'bad':''});
+      badges.forEach(function(b){var x=document.createElement('span');x.className='sb-candidate-badge '+b.cls;x.textContent=b.text;strategy.appendChild(x);});
       list.appendChild(el);
     });
   }
@@ -273,4 +283,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v5 with learned buy candidates.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v6 with MA and Turtle signals.');
