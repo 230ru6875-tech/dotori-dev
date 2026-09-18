@@ -50,6 +50,61 @@ export function calculateSignal({price,previousClose,closes,highs,lows,volumes})
   if(finite(vr))reasons.push(`20일 평균 대비 거래량 ${vr.toFixed(2)}배`);
   return{changePct:round(cp),score,signal,rsi:round(momentum,1),ma5:round(ma5),ma20:round(ma20),ma60:round(ma60),ma120:round(ma120),ma20Gap:round(g20),ma60Gap:round(g60),maStack,turtleSignal,turtle20High:round(prior20High),turtle10Low:round(prior10Low),volumeRatio:round(vr),volatility20:round(vol,1),support:finite(support)?round(support):null,resistance:finite(resistance)?round(resistance):null,trend:finite(ma20)&&finite(ma60)?(price>ma20&&ma20>ma60?"상승":price<ma20&&ma20<ma60?"하락":"혼조"):"확인 중",reasons}
 }
+function rollingValue(values,index,period,mode="avg"){
+  const start=Math.max(0,index-period+1),slice=values.slice(start,index+1).filter(finite).map(Number);
+  if(!slice.length)return null;
+  if(mode==="max")return Math.max(...slice);
+  if(mode==="min")return Math.min(...slice);
+  return slice.reduce((a,b)=>a+b,0)/slice.length;
+}
+function priorWindowValue(values,index,period,mode){
+  const end=index,start=Math.max(0,end-period),slice=values.slice(start,end).filter(finite).map(Number);
+  if(!slice.length)return null;
+  return mode==="max"?Math.max(...slice):Math.min(...slice);
+}
+export async function fetchHistorySeries(symbol,benchmark="QQQ",range="6mo"){
+  const [result,benchResult]=await Promise.all([yahooChart(symbol,range,"1d"),yahooChart(benchmark,range,"1d")]);
+  const q=result.indicators?.quote?.[0]||{},t=result.timestamp||[],c=q.close||[],h=q.high||[],l=q.low||[];
+  const bq=benchResult.indicators?.quote?.[0]||{},bt=benchResult.timestamp||[],bc=bq.close||[];
+  const benchByDay=new Map();
+  bt.forEach((ts,i)=>{if(finite(ts)&&finite(bc[i]))benchByDay.set(new Date(Number(ts)*1000).toISOString().slice(0,10),Number(bc[i]));});
+  let firstClose=null,firstBench=null;
+  const rows=[];
+  for(let i=0;i<t.length;i++){
+    if(!finite(t[i])||!finite(c[i]))continue;
+    const date=new Date(Number(t[i])*1000).toISOString().slice(0,10),close=Number(c[i]),benchClose=benchByDay.get(date);
+    if(!finite(firstClose))firstClose=close;
+    if(!finite(firstBench)&&finite(benchClose))firstBench=Number(benchClose);
+    const rs=finite(benchClose)&&finite(firstClose)&&finite(firstBench)&&firstClose>0&&firstBench>0
+      ? (close/firstClose)/(Number(benchClose)/firstBench)*100:null;
+    rows.push({
+      date,close:round(close),
+      ma5:round(rollingValue(c,i,5)),ma20:round(rollingValue(c,i,20)),ma60:round(rollingValue(c,i,60)),ma120:round(rollingValue(c,i,120)),
+      turtle20High:round(priorWindowValue(h,i,20,"max")),turtle10Low:round(priorWindowValue(l,i,10,"min")),
+      benchmarkClose:finite(benchClose)?round(benchClose):null,relativeStrength:round(rs,2)
+    });
+  }
+  const usable=rows.filter(r=>finite(r.close));
+  const last=usable.at(-1)||null,prev20=usable.length>20?usable.at(-21):usable[0]||null,prev60=usable.length>60?usable.at(-61):usable[0]||null;
+  const ret=(a,b)=>finite(a)&&finite(b)&&Number(b)!==0?(Number(a)/Number(b)-1)*100:null;
+  const lastBench=last?.benchmarkClose,bench20=prev20?.benchmarkClose,bench60=prev60?.benchmarkClose;
+  return {
+    symbol,benchmark,range,asOf:new Date().toISOString(),rows,
+    metrics:{
+      return20:round(ret(last?.close,prev20?.close)),
+      benchmarkReturn20:round(ret(lastBench,bench20)),
+      relativeReturn20:round((ret(last?.close,prev20?.close)??0)-(ret(lastBench,bench20)??0)),
+      return60:round(ret(last?.close,prev60?.close)),
+      benchmarkReturn60:round(ret(lastBench,bench60)),
+      relativeReturn60:round((ret(last?.close,prev60?.close)??0)-(ret(lastBench,bench60)??0)),
+      relativeStrength:last?.relativeStrength??null,
+      maStack:last&&finite(last.ma5)&&finite(last.ma20)&&finite(last.ma60)&&finite(last.ma120)
+        ? (last.close>last.ma5&&last.ma5>last.ma20&&last.ma20>last.ma60&&last.ma60>last.ma120?"정배열":last.close<last.ma5&&last.ma5<last.ma20&&last.ma20<last.ma60&&last.ma60<last.ma120?"역배열":"혼조")
+        :"확인 중",
+      turtleSignal:last&&finite(last.turtle20High)&&last.close>last.turtle20High?"20일 돌파":last&&finite(last.turtle10Low)&&last.close<last.turtle10Low?"10일 이탈":"대기"
+    }
+  };
+}
 async function yahooChart(symbol,range="6mo",interval="1d"){const url=`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=true&events=div%2Csplits`,response=await fetch(url,{headers:{"user-agent":"Mozilla/5.0 StrategyBar/1.0","accept":"application/json"}});if(!response.ok)throw new Error(`Yahoo ${symbol} HTTP ${response.status}`);const p=await response.json(),r=p?.chart?.result?.[0];if(!r)throw new Error(`Yahoo ${symbol} empty`);return r}
 function quoteFromResult(symbol,result,name,category){const q=result.indicators?.quote?.[0]||{},m=result.meta||{},closes=(q.close||[]).filter(finite).map(Number),highs=(q.high||[]).filter(finite).map(Number),lows=(q.low||[]).filter(finite).map(Number),volumes=(q.volume||[]).filter(finite).map(Number),selected=selectYahooSessionQuote(result),price=selected?.price??(finite(m.regularMarketPrice)?Number(m.regularMarketPrice):closes.at(-1)),previousClose=finite(m.chartPreviousClose)?Number(m.chartPreviousClose):finite(m.previousClose)?Number(m.previousClose):closes.at(-2);if(!finite(price))throw new Error(`${symbol} price missing`);const signal=calculateSignal({price,previousClose,closes,highs,lows,volumes});return attachSeries({symbol,name,category,price:round(price),previousClose:round(previousClose),...signal,open:finite(m.regularMarketOpen)?round(m.regularMarketOpen):null,dayHigh:finite(m.regularMarketDayHigh)?round(m.regularMarketDayHigh):null,dayLow:finite(m.regularMarketDayLow)?round(m.regularMarketDayLow):null,volume:finite(m.regularMarketVolume)?Number(m.regularMarketVolume):volumes.at(-1)||null,marketState:selected?.marketState||m.marketState||null,priceSession:selected?.priceSession||"REGULAR",sessionLabel:selected?.sessionLabel||"정규장",asOf:selected?.timestamp?new Date(selected.timestamp*1000).toISOString():new Date().toISOString(),source:"Yahoo Finance",provider:"Yahoo",providerPriority:3},closes)}
 function macroFromResult(key,result,name,unit){const q=result.indicators?.quote?.[0]||{},m=result.meta||{},selected=selectYahooSessionQuote(result),closes=(q.close||[]).filter(finite).map(Number),value=selected?.price??(finite(m.regularMarketPrice)?Number(m.regularMarketPrice):closes.at(-1)),prev=finite(m.chartPreviousClose)?Number(m.chartPreviousClose):finite(m.previousClose)?Number(m.previousClose):closes.at(-2);return{key,name,unit,value:round(value),previousClose:round(prev),changePct:finite(value)&&finite(prev)&&prev!==0?round((value/prev-1)*100):null,changeValue:finite(value)&&finite(prev)?round(value-prev):null,asOf:selected?.timestamp?new Date(selected.timestamp*1000).toISOString():new Date().toISOString(),source:"Yahoo Finance",provider:"Yahoo",providerPriority:3,priceSession:selected?.priceSession||"REGULAR",sessionLabel:selected?.sessionLabel||"정규장"}}
