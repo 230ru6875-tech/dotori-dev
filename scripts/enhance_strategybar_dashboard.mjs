@@ -63,7 +63,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v11">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v12">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -308,12 +308,19 @@ const injection=String.raw`
     btn=document.createElement('button');
     btn.type='button';
     btn.className='sb-invest-entry';
-    btn.textContent='투자실험';
-    btn.title='10만원 → 100만원 PAPER 투자창 열기';
+    btn.textContent='투자창 열기 ↗';
+    btn.title='10만원 → 100만원 PAPER 투자창을 새 탭으로 엽니다';
     btn.addEventListener('click',function(){
-      location.hash='investment-window';
-      var panel=document.getElementById('investment-window');
-      if(panel)panel.scrollIntoView({behavior:'smooth',block:'start'});
+      var u=new URL(location.href);
+      u.hash='investment-window';
+      var opened=window.open(u.toString(),'strategybar-investment','noopener,noreferrer');
+      if(!opened){
+        location.href=u.toString();
+        setTimeout(function(){
+          var panel=document.getElementById('investment-window');
+          if(panel)panel.scrollIntoView({behavior:'smooth',block:'start'});
+        },250);
+      }
     });
     document.body.appendChild(btn);
     return btn;
@@ -459,4 +466,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v11 with investment entry button.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v12 with new-tab investment entry.');
