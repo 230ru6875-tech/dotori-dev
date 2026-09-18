@@ -20,6 +20,15 @@ const style=String.raw`
 .sb-live-quote{margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,.16);display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
 .sb-live-quote .sb-live-price{font-size:18px;font-weight:800;color:#f8fafc}.sb-live-quote .sb-live-change{font-size:12px;font-weight:700}.sb-live-quote .sb-live-change.up{color:#fb7185}.sb-live-quote .sb-live-change.down{color:#60a5fa}
 .sb-live-quote .sb-live-meta{font-size:9px;color:#7f8da3}.sb-live-quote.flash{animation:sbQuoteFlash .55s ease-out}
+.sb-survival{margin:10px 0 12px;padding:11px;border:1px solid rgba(34,197,94,.28);border-radius:10px;background:rgba(8,12,18,.48)}
+.sb-survival-head{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.sb-survival-title{font-size:13px;font-weight:800;color:#f8fafc}.sb-survival-mode{font-size:9px;color:#86efac}
+.sb-survival-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:7px;margin-top:8px}
+.sb-survival-card{border:1px solid rgba(148,163,184,.16);border-radius:8px;padding:7px;background:rgba(15,23,42,.45)}
+.sb-survival-label{font-size:9px;color:#94a3b8}.sb-survival-value{font-size:14px;font-weight:800;color:#f8fafc;margin-top:3px}
+.sb-survival-progress{height:8px;background:rgba(148,163,184,.14);border-radius:999px;overflow:hidden;margin-top:8px}
+.sb-survival-progress>span{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#60a5fa);width:0}
+.sb-survival-positions{font-size:9px;color:#cbd5e1;margin-top:7px}
 .sb-candidates{margin:10px 0 12px;padding:10px;border:1px solid rgba(59,130,246,.28);border-radius:10px;background:rgba(8,12,18,.42)}
 .sb-candidates-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .sb-candidates-title{font-size:13px;font-weight:800;color:#f8fafc}.sb-candidates-note{font-size:9px;color:#94a3b8}
@@ -52,7 +61,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v9">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v10">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -98,6 +107,48 @@ const injection=String.raw`
     var change=document.createElement('div');change.className='sb-market-repair-change '+changeClass(row);change.textContent=changeText(row);
     if(key==='^VIX')change.classList.add('sb-vix-reading');
     el.append(label,value,change);return el;
+  }
+  async function fetchSurvival(){
+    try{
+      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store'});
+      if(!r.ok)return null;
+      var p=await r.json();
+      return p&&p.ok?p.state:null;
+    }catch(e){return null;}
+  }
+  function renderSurvival(state){
+    var grid=document.querySelector('.sb-market-responsive');
+    if(!grid||!grid.parentElement)return;
+    var panel=document.querySelector('.sb-survival');
+    if(!panel){
+      panel=document.createElement('section');panel.className='sb-survival';
+      panel.innerHTML='<div class="sb-survival-head"><div class="sb-survival-title">10만원 → 100만원 PAPER 생존 실험</div><div class="sb-survival-mode"></div></div><div class="sb-survival-grid"></div><div class="sb-survival-progress"><span></span></div><div class="sb-survival-positions"></div>';
+      grid.parentElement.insertBefore(panel,grid);
+    }
+    if(!state){
+      panel.querySelector('.sb-survival-mode').textContent='상태 수신 대기';
+      return;
+    }
+    var money=function(v){return Number(v||0).toLocaleString('ko-KR',{maximumFractionDigits:0})+'원';};
+    var mode=panel.querySelector('.sb-survival-mode');
+    mode.textContent=(state.profile||'FAST_SURVIVAL')+' · 브로커 '+(state.broker||'AUTO')+' → '+(state.activeBroker||'선택중')+(state.killSwitch?' · KILL':'')+(state.goalReached?' · 목표달성':'');
+    var cards=[
+      ['평가자산',money(state.equityKrw)],
+      ['현금',money(state.cashKrw)],
+      ['목표',money(state.targetKrw)],
+      ['진행률',(Number(state.progressPct||0)).toFixed(2)+'%'],
+      ['배수',(Number(state.equityMultiple||0)).toFixed(3)+'x'],
+      ['최대낙폭',(Number(state.drawdownPct||0)).toFixed(2)+'%'],
+      ['거래',String(state.trades||0)+'회'],
+      ['승/패',String(state.wins||0)+' / '+String(state.losses||0)]
+    ];
+    var box=panel.querySelector('.sb-survival-grid');box.replaceChildren();
+    cards.forEach(function(c){var x=document.createElement('div');x.className='sb-survival-card';x.innerHTML='<div class="sb-survival-label"></div><div class="sb-survival-value"></div>';x.children[0].textContent=c[0];x.children[1].textContent=c[1];box.appendChild(x);});
+    panel.querySelector('.sb-survival-progress>span').style.width=Math.max(0,Math.min(100,Number(state.progressPct||0)))+'%';
+    var pos=Object.values(state.positions||{});
+    panel.querySelector('.sb-survival-positions').textContent=pos.length
+      ? '보유(PAPER): '+pos.map(function(p){return p.symbol+' '+Number(p.shares||0).toFixed(4)+'주 · '+(p.broker||state.activeBroker||'');}).join(' | ')
+      : '보유(PAPER): 없음';
   }
   function buildCandidates(data){
     var rows=Object.values((data&&data.symbols)||{}).filter(function(r){return r&&finite(r.score)&&finite(r.price);});
@@ -341,6 +392,8 @@ const injection=String.raw`
         order.forEach(function(key){grid.appendChild(card(byKey[key]||{key:key,value:null},key));});
       }
       var learned=await fetchLearnedCandidates();
+      var survival=await fetchSurvival();
+      renderSurvival(survival);
       renderCandidates(data,learned);
       var symbols=Object.keys(data.symbols||{});symbols.forEach(function(s){applyQuote(data.symbols[s]);});
       if(!liveState.socket||liveState.socket.readyState>1){connectLive(symbols);}
@@ -377,4 +430,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v9 with multi-head pattern learning.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v10 with survival paper account.');
