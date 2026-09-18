@@ -94,8 +94,19 @@ function applyFeedback(rows, feedback={}){
 
 export async function getCandidates(env,snapshot,limit=8){
   const base=rawCandidates(snapshot,Math.max(limit,12));
-  const feedback=await feedbackMap(env,base.map(x=>x.symbol));
-  return applyFeedback(base,feedback).slice(0,limit);
+  const benchmark=snapshot?.symbols?.QQQ||null;
+  const enriched=base.map(row=>({
+    ...row,
+    benchmark:"QQQ",
+    relative20:finite(row.return20)&&finite(benchmark?.return20)?round(Number(row.return20)-Number(benchmark.return20)):null,
+    relative60:finite(row.return60)&&finite(benchmark?.return60)?round(Number(row.return60)-Number(benchmark.return60)):null
+  })).sort((a,b)=>{
+    const ar=(finite(a.relative20)?Number(a.relative20):0)+(finite(a.relative60)?Number(a.relative60):0);
+    const br=(finite(b.relative20)?Number(b.relative20):0)+(finite(b.relative60)?Number(b.relative60):0);
+    return br-ar;
+  });
+  const feedback=await feedbackMap(env,enriched.map(x=>x.symbol));
+  return applyFeedback(enriched,feedback).slice(0,limit);
 }
 
 export async function recordCandidateCycle(env,snapshot){
