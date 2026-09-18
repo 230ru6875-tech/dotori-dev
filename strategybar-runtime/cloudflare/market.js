@@ -32,17 +32,34 @@ export function calculateSignal({price,previousClose,closes,highs,lows,volumes})
     ? (price>ma5&&ma5>ma20&&ma20>ma60&&ma60>ma120?"정배열":price<ma5&&ma5<ma20&&ma20<ma60&&ma60<ma120?"역배열":"혼조")
     : "확인 중";
   const turtleSignal=finite(prior20High)&&price>prior20High?"20일 돌파":finite(prior10Low)&&price<prior10Low?"10일 이탈":maStack==="정배열"?"추세유지":"대기";
-  let score=50;
-  if(finite(g20))score+=g20>0?12:-12;
-  if(finite(g60))score+=g60>0?10:-10;
-  if(finite(ma20)&&finite(ma60))score+=ma20>ma60?8:-8;
-  if(maStack==="정배열")score+=6; else if(maStack==="역배열")score-=6;
-  if(turtleSignal==="20일 돌파")score+=8; else if(turtleSignal==="10일 이탈")score-=8;
-  if(finite(momentum))score+=momentum>=50&&momentum<=68?8:momentum>78?-14:momentum<32?-6:0;
-  if(finite(vr))score+=vr>=1.5?8:vr>=1.1?4:0;
-  if(finite(cp))score+=cp>0?4:-4;
-  if(finite(vol)&&vol>90)score-=8;
-  score=Math.max(0,Math.min(100,Math.round(score)));
+  const clampScore=v=>Math.max(0,Math.min(100,Math.round(v)));
+  let trendHead=50;
+  if(finite(g20))trendHead+=g20>0?14:-14;
+  if(finite(g60))trendHead+=g60>0?12:-12;
+  if(finite(ma20)&&finite(ma60))trendHead+=ma20>ma60?10:-10;
+  if(maStack==="정배열")trendHead+=12; else if(maStack==="역배열")trendHead-=12;
+  if(turtleSignal==="20일 돌파")trendHead+=12; else if(turtleSignal==="10일 이탈")trendHead-=16;
+  trendHead=clampScore(trendHead);
+
+  let momentumHead=50;
+  if(finite(momentum)) momentumHead+=momentum>=50&&momentum<=68?22:momentum>78?-20:momentum<32?-12:(momentum>=40?6:-4);
+  if(finite(cp))momentumHead+=Math.max(-12,Math.min(12,cp*2.5));
+  if(finite(ret20))momentumHead+=Math.max(-12,Math.min(12,ret20*.8));
+  momentumHead=clampScore(momentumHead);
+
+  let volumeHead=50;
+  if(finite(vr))volumeHead+=vr>=2?32:vr>=1.5?24:vr>=1.1?12:vr<.7?-12:0;
+  volumeHead=clampScore(volumeHead);
+
+  let riskHead=72;
+  if(finite(vol))riskHead-=vol>100?34:vol>75?24:vol>55?14:vol<30?4:0;
+  if(finite(momentum)&&momentum>78)riskHead-=18;
+  if(turtleSignal==="10일 이탈")riskHead-=20;
+  if(maStack==="역배열")riskHead-=12;
+  riskHead=clampScore(riskHead);
+
+  let score=.38*trendHead+.24*momentumHead+.16*volumeHead+.22*riskHead;
+  score=clampScore(score);
   const signal=momentum>78||score<=34||turtleSignal==="10일 이탈"?"주의":score>=70?"주목":score>=58?"관찰":"대기";
   const reasons=[];
   if(finite(g20))reasons.push(`20일선 대비 ${g20>=0?"상단":"하단"} ${Math.abs(g20).toFixed(1)}%`);
@@ -50,7 +67,7 @@ export function calculateSignal({price,previousClose,closes,highs,lows,volumes})
   if(turtleSignal!=="대기")reasons.push(`터틀 ${turtleSignal}`);
   if(finite(momentum))reasons.push(`RSI ${momentum.toFixed(0)}`);
   if(finite(vr))reasons.push(`20일 평균 대비 거래량 ${vr.toFixed(2)}배`);
-  return{changePct:round(cp),return20:round(ret20),return60:round(ret60),score,signal,rsi:round(momentum,1),ma5:round(ma5),ma20:round(ma20),ma60:round(ma60),ma120:round(ma120),ma20Gap:round(g20),ma60Gap:round(g60),maStack,turtleSignal,turtle20High:round(prior20High),turtle10Low:round(prior10Low),volumeRatio:round(vr),volatility20:round(vol,1),support:finite(support)?round(support):null,resistance:finite(resistance)?round(resistance):null,trend:finite(ma20)&&finite(ma60)?(price>ma20&&ma20>ma60?"상승":price<ma20&&ma20<ma60?"하락":"혼조"):"확인 중",reasons}
+  return{changePct:round(cp),return20:round(ret20),return60:round(ret60),score,signal,headScores:{trend:trendHead,momentum:momentumHead,volume:volumeHead,risk:riskHead},rsi:round(momentum,1),ma5:round(ma5),ma20:round(ma20),ma60:round(ma60),ma120:round(ma120),ma20Gap:round(g20),ma60Gap:round(g60),maStack,turtleSignal,turtle20High:round(prior20High),turtle10Low:round(prior10Low),volumeRatio:round(vr),volatility20:round(vol,1),support:finite(support)?round(support):null,resistance:finite(resistance)?round(resistance):null,trend:finite(ma20)&&finite(ma60)?(price>ma20&&ma20>ma60?"상승":price<ma20&&ma20<ma60?"하락":"혼조"):"확인 중",reasons}
 }
 function rollingValue(values,index,period,mode="avg"){
   const start=Math.max(0,index-period+1),slice=values.slice(start,index+1).filter(finite).map(Number);
