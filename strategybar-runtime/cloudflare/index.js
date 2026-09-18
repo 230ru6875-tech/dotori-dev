@@ -2,7 +2,7 @@ export { LiveQuotes } from "./live-quotes.js";
 import { applyExternalSessionQuote, fetchHistorySeries, fetchMarketSnapshot, STOCKS } from "./market.js";
 import { handleMarketIngest } from "./ingest.js";
 import { createAnalysis, createRuleBasedAnalysis } from "./openai.js";
-import { getCandidates, recordCandidateCycle } from "./candidates.js";
+import { getCandidates, recordCandidateCycle, summarizeCandidateContext } from "./candidates.js";
 
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), {status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...headers}});
 const validSymbol = (value) => typeof value === "string" && /^[A-Z0-9.^=-]{1,15}$/.test(value);
@@ -19,7 +19,7 @@ async function getCache(env, key) {
 async function putCache(env, key, payload) {
   if (!env.DB) return;
   await env.DB.prepare("INSERT INTO market_cache(cache_key,payload,updated_at) VALUES(?,?,?) ON CONFLICT(cache_key) DO UPDATE SET payload=excluded.payload,updated_at=excluded.updated_at")
-    .bind(key,JSON.stringify(payload),now()).run();
+    .bind(key,JSON.stringify(analysis),now()).run();
 }
 
 function dig(obj, paths=[]) {
@@ -226,13 +226,14 @@ async function claimQuota(env) {
   return Number(result.meta?.changes||0)>0;
 }
 
-function compactMarket(snapshot) {
-  const candidates=Object.values(snapshot.symbols||{}).sort((a,b)=>b.score-a.score).slice(0,8).map(({symbol,price,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,source,provider,asOf,priceSession,sessionLabel})=>({symbol,price,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,source,provider,asOf,priceSession,sessionLabel}));
-  return {asOf:snapshot.asOf,session:snapshot.session,market:snapshot.market,candidates,failedSymbols:(snapshot.errors||[]).length};
+function compactMarket(snapshot,candidates=null) {
+  const learned=Array.isArray(candidates)?summarizeCandidateContext(candidates):[];
+  const fallback=Object.values(snapshot.symbols||{}).sort((a,b)=>b.score-a.score).slice(0,8).map(({symbol,price,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,source,provider,asOf,priceSession,sessionLabel,headScores})=>({symbol,price,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,source,provider,asOf,priceSession,sessionLabel,headScores}));
+  return {asOf:snapshot.asOf,session:snapshot.session,market:snapshot.market,candidates:learned.length?learned:fallback,failedSymbols:(snapshot.errors||[]).length};
 }
 function compactSymbol(row) {
-  const {symbol,name,category,price,previousClose,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,trend,reasons,source,provider,asOf,marketState,priceSession,sessionLabel}=row;
-  return {symbol,name,category,price,previousClose,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,trend,reasons,source,provider,asOf,marketState,priceSession,sessionLabel};
+  const {symbol,name,category,price,previousClose,changePct,return20,return60,score,signal,headScores,rsi,ma20Gap,ma60Gap,maStack,turtleSignal,volumeRatio,volatility20,support,resistance,trend,reasons,source,provider,asOf,marketState,priceSession,sessionLabel}=row;
+  return {symbol,name,category,price,previousClose,changePct,return20,return60,score,signal,headScores,rsi,ma20Gap,ma60Gap,maStack,turtleSignal,volumeRatio,volatility20,support,resistance,trend,reasons,source,provider,asOf,marketState,priceSession,sessionLabel};
 }
 
 async function historyGet(request,env){
@@ -268,9 +269,12 @@ async function analysisPost(request,env) {
   const key=`symbol:${symbol}`,cached=await readAnalysis(env,key);
   const cacheAge=cached?now()-Date.parse(cached.generatedAt):Infinity;
   if (cached&&cacheAge<(cached.providerStatus==="fallback"?300000:3600000)) return json({ok:true,analysis:cached,cacheStatus:"hit"});
-  const quote=(await (STOCKS[symbol]?getBaseMarket(env,false):getExtra(env,symbol,false))).symbols[symbol];
+  const snapshot=await (STOCKS[symbol]?getBaseMarket(env,false):getExtra(env,symbol,false));
+  const quote=snapshot.symbols[symbol];
   if (!quote) return json({ok:false,error:"시세를 확인할 수 없습니다."},404);
-  const input={kind:"single_security",security:compactSymbol(quote)};
+  const learnedRows=await getCandidates(env,snapshot,36).catch(()=>[]);
+  const learned=learnedRows.find((row)=>row.symbol===symbol)||null;
+  const input={kind:"single_security",security:compactSymbol(quote),learnedContext:learned?summarizeCandidateContext([learned])[0]:null,marketContext:{session:snapshot.session,market:snapshot.market}};
   let analysis,cacheStatus="refreshed";
   if (!env.OPENAI_API_KEY) { analysis=createRuleBasedAnalysis(input,"symbol","OpenAI API 키가 연결되지 않았습니다."); cacheStatus="fallback"; }
   else if (!await claimQuota(env)) { analysis=createRuleBasedAnalysis(input,"symbol","오늘의 OpenAI 분석 한도에 도달했습니다."); cacheStatus="fallback"; }
@@ -290,9 +294,10 @@ async function scheduledRefresh(env) {
   if (!isUsMarketWindow()) return;
   const baseline=await fetchMarketSnapshot(); await putCache(env,"market:base",baseline);
   const snapshot=await applyQuoteLayers(env,baseline);
-  try { await recordCandidateCycle(env,snapshot); } catch {}
+  let learnedCandidates=[];
+  try { await recordCandidateCycle(env,snapshot); learnedCandidates=await getCandidates(env,snapshot,8); } catch {}
   if (!env.OPENAI_API_KEY||!await claimQuota(env)) return;
-  const input={kind:"market_brief",...compactMarket(snapshot)};
+  const input={kind:"market_brief",...compactMarket(snapshot,learnedCandidates)};
   let analysis;
   try { analysis=await createAnalysis(env,input,"market"); }
   catch (error) { analysis=createRuleBasedAnalysis(input,"market",error instanceof Error?error.message:"OpenAI 연결 오류"); }
