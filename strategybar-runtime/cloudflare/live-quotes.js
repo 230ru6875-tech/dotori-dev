@@ -101,6 +101,19 @@ export class LiveQuotes {
       return json({ ok: true, quotes: await this.latestQuotes(symbols), at: new Date().toISOString() });
     }
 
+    if (url.pathname === "/paper-publish" && request.method === "POST") {
+      let state;
+      try { state = await request.json(); } catch { return json({ ok:false, error:"invalid json" },400); }
+      const payload={...state,updatedAt:new Date().toISOString()};
+      await this.ctx.storage.put("survival-paper-state",payload);
+      return json({ok:true,state:payload});
+    }
+
+    if (url.pathname === "/paper-latest") {
+      const state=await this.ctx.storage.get("survival-paper-state");
+      return json({ok:true,state:state||null,at:new Date().toISOString()});
+    }
+
     return json({ ok: false, error: "not found" }, 404);
   }
 
