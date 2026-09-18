@@ -460,7 +460,7 @@ html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
 
-const investmentHtml=String.raw\`<!doctype html>
+const investmentHtml=String.raw`<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
@@ -558,7 +558,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
   setInterval(load,10000);
 })();
 </script>
-</body></html>\`;
+</body></html>`;
 
 const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
 if(!investmentScript)throw new Error('investment script extraction failed');
