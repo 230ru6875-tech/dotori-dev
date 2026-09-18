@@ -63,7 +63,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v12">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v13">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -311,16 +311,9 @@ const injection=String.raw`
     btn.textContent='투자창 열기 ↗';
     btn.title='10만원 → 100만원 PAPER 투자창을 새 탭으로 엽니다';
     btn.addEventListener('click',function(){
-      var u=new URL(location.href);
-      u.hash='investment-window';
-      var opened=window.open(u.toString(),'strategybar-investment','noopener,noreferrer');
-      if(!opened){
-        location.href=u.toString();
-        setTimeout(function(){
-          var panel=document.getElementById('investment-window');
-          if(panel)panel.scrollIntoView({behavior:'smooth',block:'start'});
-        },250);
-      }
+      var target='/investment.html';
+      var opened=window.open(target,'_blank');
+      if(!opened) location.href=target;
     });
     document.body.appendChild(btn);
     return btn;
@@ -466,4 +459,83 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v12 with new-tab investment entry.');
+
+const investmentHtml=\`<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>StrategyBar 투자실험</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#05070b;color:#e5e7eb;font-family:Arial,"Noto Sans KR",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:22px;margin:0}.badge{font-size:12px;padding:6px 9px;border:1px solid #14532d;border-radius:999px;color:#86efac;background:#052e16}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:14px}
+.card{border:1px solid #1f2937;border-radius:10px;padding:12px;background:#0b1220}.label{font-size:11px;color:#94a3b8}.value{font-size:20px;font-weight:800;margin-top:5px}
+.progress{height:12px;background:#172033;border-radius:999px;overflow:hidden;margin-top:14px}.progress>span{display:block;height:100%;width:0;background:linear-gradient(90deg,#22c55e,#60a5fa)}
+.section{margin-top:16px;border:1px solid #1f2937;border-radius:10px;padding:12px;background:#0a0f19}.section h2{font-size:15px;margin:0 0 10px}
+table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;border-bottom:1px solid #1f2937;text-align:left}th{color:#94a3b8;font-weight:600}
+.empty{color:#94a3b8;font-size:12px}.warn{color:#fca5a5}.ok{color:#86efac}.muted{color:#94a3b8;font-size:11px;margin-top:10px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid #334155;background:#111827;color:#e5e7eb;border-radius:8px;padding:7px 10px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>10만원 → 100만원 PAPER 생존 실험</h1><div class="muted">나무증권(NAMUH) 기준 · 실거래 아님</div></div>
+    <div class="actions"><button class="btn" id="refresh">새로고침</button><button class="btn" id="back">전략바로 돌아가기</button></div>
+  </div>
+  <div id="mode" class="badge">상태 불러오는 중</div>
+  <div class="grid" id="cards"></div>
+  <div class="progress"><span id="bar"></span></div>
+  <div class="section"><h2>보유 종목 (PAPER)</h2><div id="positions"></div></div>
+  <div class="section"><h2>상태</h2><div id="status"></div></div>
+</div>
+<script>
+(function(){
+ const money=v=>Number(v||0).toLocaleString('ko-KR',{maximumFractionDigits:0})+'원';
+ const num=(v,d=2)=>Number(v||0).toFixed(d);
+ async function load(){
+   const mode=document.getElementById('mode'); mode.textContent='상태 불러오는 중';
+   try{
+     const r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store'});
+     if(!r.ok)throw new Error('HTTP '+r.status);
+     const p=await r.json(),s=p&&p.state;
+     if(!s)throw new Error('state empty');
+     mode.textContent=(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
+     mode.className='badge'+(s.killSwitch?' warn':'');
+     const cards=[
+       ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
+       ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
+       ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
+       ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
+     ];
+     const host=document.getElementById('cards');host.innerHTML='';
+     cards.forEach(c=>{const d=document.createElement('div');d.className='card';d.innerHTML='<div class="label"></div><div class="value"></div>';d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);});
+     document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
+     const pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
+     if(!pos.length){ph.innerHTML='<div class="empty">보유 종목 없음</div>';}
+     else{
+       let html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
+       pos.forEach(x=>{html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>
++Number(x.entryPrice||0).toFixed(2)+'</td><td>
++Number(x.lastPrice||0).toFixed(2)+'</td><td>
++Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';});
+       ph.innerHTML=html+'</tbody></table>';
+     }
+     document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
+   }catch(e){
+     mode.textContent='투자 상태를 불러오지 못했습니다';
+     mode.className='badge warn';
+     document.getElementById('status').textContent=String(e);
+   }
+ }
+ document.getElementById('refresh').onclick=load;
+ document.getElementById('back').onclick=()=>{location.href='/?view=1&tab=dashboard';};
+ load(); setInterval(load,30000);
+})();
+</script>
+</body></html>\`;
+fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
+
+console.log('Applied StrategyBar WebSocket live quote enhancer v13 with standalone investment page.');
