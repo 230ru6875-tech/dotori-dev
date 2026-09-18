@@ -460,7 +460,7 @@ html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
 
-const investmentHtml=`<!doctype html>
+const investmentHtml=String.raw\`<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
@@ -469,13 +469,13 @@ const investmentHtml=`<!doctype html>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#05070b;color:#e5e7eb;font-family:Arial,"Noto Sans KR",sans-serif}
 .wrap{max-width:1180px;margin:0 auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-h1{font-size:22px;margin:0}.badge{font-size:12px;padding:6px 9px;border:1px solid #14532d;border-radius:999px;color:#86efac;background:#052e16}
+h1{font-size:22px;margin:0}.badge{display:inline-block;margin-top:10px;font-size:12px;padding:6px 9px;border:1px solid #14532d;border-radius:999px;color:#86efac;background:#052e16}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:14px}
 .card{border:1px solid #1f2937;border-radius:10px;padding:12px;background:#0b1220}.label{font-size:11px;color:#94a3b8}.value{font-size:20px;font-weight:800;margin-top:5px}
 .progress{height:12px;background:#172033;border-radius:999px;overflow:hidden;margin-top:14px}.progress>span{display:block;height:100%;width:0;background:linear-gradient(90deg,#22c55e,#60a5fa)}
 .section{margin-top:16px;border:1px solid #1f2937;border-radius:10px;padding:12px;background:#0a0f19}.section h2{font-size:15px;margin:0 0 10px}
 table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;border-bottom:1px solid #1f2937;text-align:left}th{color:#94a3b8;font-weight:600}
-.empty{color:#94a3b8;font-size:12px}.warn{color:#fca5a5}.ok{color:#86efac}.muted{color:#94a3b8;font-size:11px;margin-top:10px}
+.empty{color:#94a3b8;font-size:12px}.warn{color:#fca5a5}.muted{color:#94a3b8;font-size:11px;margin-top:10px}
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid #334155;background:#111827;color:#e5e7eb;border-radius:8px;padding:7px 10px;cursor:pointer}
 </style>
 </head>
@@ -485,54 +485,81 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
     <div><h1>10만원 → 100만원 PAPER 생존 실험</h1><div class="muted">나무증권(NAMUH) 기준 · 실거래 아님</div></div>
     <div class="actions"><button class="btn" id="refresh">새로고침</button><button class="btn" id="back">전략바로 돌아가기</button></div>
   </div>
-  <div id="mode" class="badge">상태 불러오는 중</div>
+  <div id="mode" class="badge">상태 확인 중…</div>
   <div class="grid" id="cards"></div>
   <div class="progress"><span id="bar"></span></div>
-  <div class="section"><h2>보유 종목 (PAPER)</h2><div id="positions"></div></div>
-  <div class="section"><h2>상태</h2><div id="status"></div></div>
+  <div class="section"><h2>보유 종목 (PAPER)</h2><div id="positions"><div class="empty">불러오는 중…</div></div></div>
+  <div class="section"><h2>상태</h2><div id="status" class="empty">불러오는 중…</div></div>
 </div>
 <script>
 (function(){
- const money=v=>Number(v||0).toLocaleString('ko-KR',{maximumFractionDigits:0})+'원';
- const num=(v,d=2)=>Number(v||0).toFixed(d);
- function renderState(s,stale){
-   const mode=document.getElementById('mode');
-   mode.textContent=(stale?'최근 저장값 · ':'')+(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
-   mode.className='badge'+(s.killSwitch?' warn':'');
-   const cards=[
-     ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
-     ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
-     ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
-     ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
-   ];
-   const host=document.getElementById('cards');host.innerHTML='';
-   cards.forEach(c=>{const d=document.createElement('div');d.className='card';d.innerHTML='<div class="label"></div><div class="value"></div>';d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);});
-   document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
-   const pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
-   if(!pos.length){ph.innerHTML='<div class="empty">보유 종목 없음</div>';}
-   else{
-     let html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
-     pos.forEach(x=>{html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>
-     if(!r.ok)throw new Error('HTTP '+r.status);
-     const p=await r.json(),s=p&&p.state;
-     if(!s)throw new Error('state empty');
-     localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(s));
-     renderState(s,false);
+  var money=function(v){return Number(v||0).toLocaleString('ko-KR',{maximumFractionDigits:0})+'원';};
+  var num=function(v,d){return Number(v||0).toFixed(d===undefined?2:d);};
 
-   }catch(e){
-     if(!cached){
-       mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
-       mode.className='badge warn';
-       document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
-     }
-   }finally{clearTimeout(timer);}
- }
- document.getElementById('refresh').onclick=load;
- document.getElementById('back').onclick=()=>{location.href='/?view=1&tab=dashboard';};
- load(); setInterval(load,30000);
+  function renderState(s,stale){
+    var mode=document.getElementById('mode');
+    mode.textContent=(stale?'최근 저장값 · ':'')+(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
+    mode.className='badge'+(s.killSwitch?' warn':'');
+    var cards=[
+      ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
+      ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
+      ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
+      ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
+    ];
+    var host=document.getElementById('cards');host.innerHTML='';
+    cards.forEach(function(c){
+      var d=document.createElement('div');d.className='card';
+      d.innerHTML='<div class="label"></div><div class="value"></div>';
+      d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);
+    });
+    document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
+    var pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
+    if(!pos.length){
+      ph.innerHTML='<div class="empty">보유 종목 없음</div>';
+    }else{
+      var html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
+      pos.forEach(function(x){
+        html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>$'+Number(x.entryPrice||0).toFixed(2)+'</td><td>$'+Number(x.lastPrice||0).toFixed(2)+'</td><td>$'+Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';
+      });
+      ph.innerHTML=html+'</tbody></table>';
+    }
+    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
+  }
+
+  async function load(){
+    var mode=document.getElementById('mode');
+    var cached=null;
+    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
+    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
+
+    var controller=new AbortController();
+    var timer=setTimeout(function(){controller.abort();},3500);
+    try{
+      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      var p=await r.json(),state=p&&p.state;
+      if(!state)throw new Error('state empty');
+      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
+      renderState(state,false);
+    }catch(e){
+      if(!cached){
+        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
+        mode.className='badge warn';
+        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
+      }
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
+  document.getElementById('refresh').onclick=load;
+  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
+  load();
+  setInterval(load,10000);
 })();
 </script>
-</body></html>`;
+</body></html>\`;
+
 const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
 if(!investmentScript)throw new Error('investment script extraction failed');
 const investmentCheck='/tmp/strategybar-investment-check.js';
@@ -541,130 +568,3 @@ execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
 fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
 
 console.log('Applied StrategyBar WebSocket live quote enhancer v14 with fast validated investment status.');
-+Number(x.entryPrice||0).toFixed(2)+'</td><td>
-     if(!r.ok)throw new Error('HTTP '+r.status);
-     const p=await r.json(),s=p&&p.state;
-     if(!s)throw new Error('state empty');
-     mode.textContent=(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
-     mode.className='badge'+(s.killSwitch?' warn':'');
-     const cards=[
-       ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
-       ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
-       ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
-       ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
-     ];
-     const host=document.getElementById('cards');host.innerHTML='';
-     cards.forEach(c=>{const d=document.createElement('div');d.className='card';d.innerHTML='<div class="label"></div><div class="value"></div>';d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);});
-     document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
-     const pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
-     if(!pos.length){ph.innerHTML='<div class="empty">보유 종목 없음</div>';}
-     else{
-       let html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
-       pos.forEach(x=>{html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>$'+Number(x.entryPrice||0).toFixed(2)+'</td><td>$'+Number(x.lastPrice||0).toFixed(2)+'</td><td>$'+Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';});
-       ph.innerHTML=html+'</tbody></table>';
-     }
-     document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-   }catch(e){
-     mode.textContent='투자 상태를 불러오지 못했습니다';
-     mode.className='badge warn';
-     document.getElementById('status').textContent=String(e);
-   }
- }
- document.getElementById('refresh').onclick=load;
- document.getElementById('back').onclick=()=>{location.href='/?view=1&tab=dashboard';};
- load(); setInterval(load,30000);
-})();
-</script>
-</body></html>`;
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v13 with standalone investment page.');
-+Number(x.lastPrice||0).toFixed(2)+'</td><td>
-     if(!r.ok)throw new Error('HTTP '+r.status);
-     const p=await r.json(),s=p&&p.state;
-     if(!s)throw new Error('state empty');
-     mode.textContent=(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
-     mode.className='badge'+(s.killSwitch?' warn':'');
-     const cards=[
-       ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
-       ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
-       ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
-       ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
-     ];
-     const host=document.getElementById('cards');host.innerHTML='';
-     cards.forEach(c=>{const d=document.createElement('div');d.className='card';d.innerHTML='<div class="label"></div><div class="value"></div>';d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);});
-     document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
-     const pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
-     if(!pos.length){ph.innerHTML='<div class="empty">보유 종목 없음</div>';}
-     else{
-       let html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
-       pos.forEach(x=>{html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>$'+Number(x.entryPrice||0).toFixed(2)+'</td><td>$'+Number(x.lastPrice||0).toFixed(2)+'</td><td>$'+Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';});
-       ph.innerHTML=html+'</tbody></table>';
-     }
-     document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-   }catch(e){
-     mode.textContent='투자 상태를 불러오지 못했습니다';
-     mode.className='badge warn';
-     document.getElementById('status').textContent=String(e);
-   }
- }
- document.getElementById('refresh').onclick=load;
- document.getElementById('back').onclick=()=>{location.href='/?view=1&tab=dashboard';};
- load(); setInterval(load,30000);
-})();
-</script>
-</body></html>`;
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v13 with standalone investment page.');
-+Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';});
-     ph.innerHTML=html+'</tbody></table>';
-   }
-   document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
- }
- async function load(){
-   const mode=document.getElementById('mode');
-   let cached=null;
-   try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch{}
-   if(cached) renderState(cached,true); else mode.textContent='상태 확인 중…';
-   const controller=new AbortController();
-   const timer=setTimeout(()=>controller.abort(),3500);
-   try{
-     const r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
-     if(!r.ok)throw new Error('HTTP '+r.status);
-     const p=await r.json(),s=p&&p.state;
-     if(!s)throw new Error('state empty');
-     mode.textContent=(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
-     mode.className='badge'+(s.killSwitch?' warn':'');
-     const cards=[
-       ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
-       ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
-       ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
-       ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
-     ];
-     const host=document.getElementById('cards');host.innerHTML='';
-     cards.forEach(c=>{const d=document.createElement('div');d.className='card';d.innerHTML='<div class="label"></div><div class="value"></div>';d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);});
-     document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
-     const pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
-     if(!pos.length){ph.innerHTML='<div class="empty">보유 종목 없음</div>';}
-     else{
-       let html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
-       pos.forEach(x=>{html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>$'+Number(x.entryPrice||0).toFixed(2)+'</td><td>$'+Number(x.lastPrice||0).toFixed(2)+'</td><td>$'+Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';});
-       ph.innerHTML=html+'</tbody></table>';
-     }
-     document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-   }catch(e){
-     mode.textContent='투자 상태를 불러오지 못했습니다';
-     mode.className='badge warn';
-     document.getElementById('status').textContent=String(e);
-   }
- }
- document.getElementById('refresh').onclick=load;
- document.getElementById('back').onclick=()=>{location.href='/?view=1&tab=dashboard';};
- load(); setInterval(load,30000);
-})();
-</script>
-</body></html>`;
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v13 with standalone investment page.');
