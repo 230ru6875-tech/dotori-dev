@@ -9,7 +9,7 @@ INGEST_SECRET=os.getenv("MARKET_INGEST_SECRET","").strip()
 
 MODE="PAPER_ONLY"
 PROFILE=os.getenv("SURVIVAL_PROFILE","FAST_SURVIVAL").strip().upper()
-BROKER_MODE=os.getenv("SURVIVAL_BROKER","AUTO").strip().upper()
+BROKER_MODE=os.getenv("SURVIVAL_BROKER","NAMUH").strip().upper()
 START_KRW=float(os.getenv("SURVIVAL_START_KRW","100000"))
 TARGET_KRW=float(os.getenv("SURVIVAL_TARGET_KRW","1000000"))
 POLL=max(15,int(os.getenv("SURVIVAL_POLL_SECONDS","30")))
@@ -53,7 +53,7 @@ def load_state():
         s={}
     s.setdefault("mode",MODE)
     s.setdefault("profile",PROFILE)
-    s.setdefault("broker",BROKER_MODE if BROKER_MODE in ("AUTO",)+BROKERS else "AUTO")
+    s.setdefault("broker",BROKER_MODE if BROKER_MODE in ("AUTO",)+BROKERS else "NAMUH")
     s.setdefault("activeBroker",None)
     s.setdefault("startKrw",START_KRW)
     s.setdefault("targetKrw",TARGET_KRW)
