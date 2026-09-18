@@ -1,5 +1,5 @@
 export { LiveQuotes } from "./live-quotes.js";
-import { applyExternalSessionQuote, fetchMarketSnapshot, STOCKS } from "./market.js";
+import { applyExternalSessionQuote, fetchHistorySeries, fetchMarketSnapshot, STOCKS } from "./market.js";
 import { handleMarketIngest } from "./ingest.js";
 import { createAnalysis, createRuleBasedAnalysis } from "./openai.js";
 import { getCandidates, recordCandidateCycle } from "./candidates.js";
@@ -235,6 +235,20 @@ function compactSymbol(row) {
   return {symbol,name,category,price,previousClose,changePct,score,signal,rsi,ma20Gap,ma60Gap,volumeRatio,volatility20,support,resistance,trend,reasons,source,provider,asOf,marketState,priceSession,sessionLabel};
 }
 
+async function historyGet(request,env){
+  const url=new URL(request.url);
+  const symbol=String(url.searchParams.get("symbol")||"").toUpperCase();
+  const benchmark=String(url.searchParams.get("benchmark")||"QQQ").toUpperCase();
+  const range=String(url.searchParams.get("range")||"6mo");
+  if(!validSymbol(symbol)||!validSymbol(benchmark))return json({ok:false,error:"티커 형식이 올바르지 않습니다."},400);
+  try{
+    const data=await fetchHistorySeries(symbol,benchmark,range);
+    return json({ok:true,...data});
+  }catch(error){
+    return json({ok:false,error:error instanceof Error?error.message:"history unavailable"},502);
+  }
+}
+
 async function candidatesGet(request,env) {
   const url=new URL(request.url);
   const limit=Math.max(1,Math.min(12,Number(url.searchParams.get("limit")||8)));
@@ -303,6 +317,7 @@ export default {
       }
       if (request.method==="POST"&&url.pathname==="/api/market-ingest") return await handleMarketIngest(request,env);
       if (request.method==="GET"&&url.pathname==="/api/market") return await marketRoute(request,env);
+      if (request.method==="GET"&&url.pathname==="/api/history") return await historyGet(request,env);
       if (request.method==="GET"&&url.pathname==="/api/candidates") return await candidatesGet(request,env);
       if (request.method==="GET"&&url.pathname==="/api/analysis") return await analysisGet(request,env);
       if (request.method==="POST"&&url.pathname==="/api/analysis") return await analysisPost(request,env);
