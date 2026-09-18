@@ -460,7 +460,7 @@ html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
 
-const investmentHtml=\`<!doctype html>
+const investmentHtml=`<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
@@ -535,7 +535,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
  load(); setInterval(load,30000);
 })();
 </script>
-</body></html>\`;
+</body></html>`;
 fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
 
 console.log('Applied StrategyBar WebSocket live quote enhancer v13 with standalone investment page.');
