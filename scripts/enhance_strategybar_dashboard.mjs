@@ -49,7 +49,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v7">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v8">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -128,7 +128,7 @@ const injection=String.raw`
     var panel=document.querySelector('.sb-candidates');
     if(!panel){
       panel=document.createElement('section');panel.className='sb-candidates';
-      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수 + MA 5/20/60/120 + 터틀 돌파 + 과거성과 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
+      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수 + MA + 터틀 + QQQ 상대강도 + 과거성과 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
       grid.parentElement.insertBefore(panel,grid);
     }
     var list=panel.querySelector('.sb-candidates-grid');
@@ -146,7 +146,7 @@ const injection=String.raw`
       el.querySelector('.sb-candidate-price').textContent=quotePriceText(r);
       el.querySelector('.sb-candidate-change').textContent=pctText;
       el.querySelector('.sb-candidate-signal').textContent=(r.signal||'후보')+(r.verdict?' · '+r.verdict:'');
-      el.querySelector('.sb-candidate-provider').textContent=(r.provider||'')+(finite(r.avgReturnPct)?' · 누적 '+(Number(r.avgReturnPct)>0?'+':'')+Number(r.avgReturnPct).toFixed(2)+'%':'');
+      el.querySelector('.sb-candidate-provider').textContent=(r.provider||'')+(finite(r.avgReturnPct)?' · 누적 '+(Number(r.avgReturnPct)>0?'+':'')+Number(r.avgReturnPct).toFixed(2)+'%':'')+(finite(r.relative20)?' · QQQ20 '+(Number(r.relative20)>0?'+':'')+Number(r.relative20).toFixed(2)+'%':'');
       var strategy=el.querySelector('.sb-candidate-strategy');
       var badges=[];
       if(r.maStack)badges.push({text:'MA '+r.maStack,cls:r.maStack==='정배열'?'good':r.maStack==='역배열'?'bad':''});
@@ -364,4 +364,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v7 with detail chart and relative strength.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v8 with candidate relative strength ranking.');
