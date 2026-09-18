@@ -33,6 +33,9 @@ const style=String.raw`
 .sb-candidate-badge.hot{color:#fde68a;border-color:rgba(253,230,138,.4)}
 .sb-candidate-badge.good{color:#86efac;border-color:rgba(134,239,172,.35)}
 .sb-candidate-badge.bad{color:#fca5a5;border-color:rgba(252,165,165,.35)}
+.sb-candidate-heads{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;margin-top:6px}
+.sb-candidate-head{font-size:8px;border:1px solid rgba(148,163,184,.15);border-radius:5px;padding:3px 4px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-candidate-history{font-size:9px;color:#a5b4fc;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-candidate-change.up{color:#fb7185}.sb-candidate-change.down{color:#60a5fa}
 .sb-detail{margin:10px 0 12px;padding:12px;border:1px solid rgba(148,163,184,.22);border-radius:10px;background:rgba(8,12,18,.55)}
 .sb-detail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px}
@@ -49,7 +52,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v8">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v9">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -128,7 +131,7 @@ const injection=String.raw`
     var panel=document.querySelector('.sb-candidates');
     if(!panel){
       panel=document.createElement('section');panel.className='sb-candidates';
-      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">전략점수 + MA + 터틀 + QQQ 상대강도 + 과거성과 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
+      panel.innerHTML='<div class="sb-candidates-head"><div class="sb-candidates-title">매수후보 TOP 8</div><div class="sb-candidates-note">6-헤드 동적가중 + MA/터틀 + QQQ 상대강도 + 유사패턴 성과 · 30초 재선정</div></div><div class="sb-candidates-grid"></div>';
       grid.parentElement.insertBefore(panel,grid);
     }
     var list=panel.querySelector('.sb-candidates-grid');
@@ -139,19 +142,29 @@ const injection=String.raw`
       var pct=finite(r.changePct)?Number(r.changePct):null;
       var cls=Number.isFinite(pct)?(pct>0?'up':pct<0?'down':''):'';
       var pctText=Number.isFinite(pct)?((pct>0?'+':'')+pct.toFixed(2)+'%'):'--';
-      el.innerHTML='<div class="sb-candidate-top"><span class="sb-candidate-symbol"></span><span class="sb-candidate-score"></span></div><div class="sb-candidate-price"></div><div class="sb-candidate-meta"><span class="sb-candidate-change '+cls+'"></span> · <span class="sb-candidate-signal"></span> · <span class="sb-candidate-provider"></span></div><div class="sb-candidate-strategy"></div>';
+      el.innerHTML='<div class="sb-candidate-top"><span class="sb-candidate-symbol"></span><span class="sb-candidate-score"></span></div><div class="sb-candidate-price"></div><div class="sb-candidate-meta"><span class="sb-candidate-change '+cls+'"></span> · <span class="sb-candidate-signal"></span> · <span class="sb-candidate-provider"></span></div><div class="sb-candidate-strategy"></div><div class="sb-candidate-heads"></div><div class="sb-candidate-history"></div>';
       el.querySelector('.sb-candidate-symbol').textContent=r.symbol;
       var shownScore=finite(r.adjustedScore)?Number(r.adjustedScore):Number(r.score);
       el.querySelector('.sb-candidate-score').textContent='점수 '+shownScore.toFixed(0)+(finite(r.penaltyScore)&&Number(r.penaltyScore)>0?' (-'+Number(r.penaltyScore).toFixed(1)+')':'');
       el.querySelector('.sb-candidate-price').textContent=quotePriceText(r);
       el.querySelector('.sb-candidate-change').textContent=pctText;
-      el.querySelector('.sb-candidate-signal').textContent=(r.signal||'후보')+(r.verdict?' · '+r.verdict:'');
+      el.querySelector('.sb-candidate-signal').textContent=(r.compositeSignal||r.signal||'후보')+(r.marketRegime?' · '+(r.marketRegime==='risk_on'?'Risk-On':r.marketRegime==='risk_off'?'Risk-Off':'중립'):'')+(r.verdict?' · '+r.verdict:'');
       el.querySelector('.sb-candidate-provider').textContent=(r.provider||'')+(finite(r.avgReturnPct)?' · 누적 '+(Number(r.avgReturnPct)>0?'+':'')+Number(r.avgReturnPct).toFixed(2)+'%':'')+(finite(r.relative20)?' · QQQ20 '+(Number(r.relative20)>0?'+':'')+Number(r.relative20).toFixed(2)+'%':'');
       var strategy=el.querySelector('.sb-candidate-strategy');
       var badges=[];
       if(r.maStack)badges.push({text:'MA '+r.maStack,cls:r.maStack==='정배열'?'good':r.maStack==='역배열'?'bad':''});
       if(r.turtleSignal)badges.push({text:'터틀 '+r.turtleSignal,cls:r.turtleSignal==='20일 돌파'?'hot':r.turtleSignal==='10일 이탈'?'bad':''});
       badges.forEach(function(b){var x=document.createElement('span');x.className='sb-candidate-badge '+b.cls;x.textContent=b.text;strategy.appendChild(x);});
+      var heads=el.querySelector('.sb-candidate-heads'),hs=r.headScores||{};
+      [['추세','trend'],['모멘텀','momentum'],['거래량','volume'],['상대강도','relative'],['시장','market'],['위험','risk']].forEach(function(pair){
+        var x=document.createElement('span');x.className='sb-candidate-head';x.textContent=pair[0]+' '+(finite(hs[pair[1]])?Number(hs[pair[1]]).toFixed(0):'--');heads.appendChild(x);
+      });
+      var history=el.querySelector('.sb-candidate-history');
+      if(finite(r.patternSuccessRate)&&Number(r.patternSamples||0)>0){
+        history.textContent='유사패턴 '+Number(r.patternSamples)+'회 · '+(r.patternHorizon||'')+' 성공률 '+(Number(r.patternSuccessRate)*100).toFixed(0)+'% · 평균 '+(Number(r.patternAvgReturn)>0?'+':'')+Number(r.patternAvgReturn||0).toFixed(2)+'%';
+      }else{
+        history.textContent='유사패턴 학습 데이터 축적 중';
+      }
       el.addEventListener('click',function(){loadDetail(r.symbol,'QQQ');});
       list.appendChild(el);
     });
@@ -364,4 +377,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v8 with candidate relative strength ranking.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v9 with multi-head pattern learning.');
