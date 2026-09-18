@@ -15,6 +15,8 @@ const style=String.raw`
 .sb-market-repaired .sb-market-repair-value{font-size:16px;font-weight:700;color:#f8fafc;line-height:1.15}
 .sb-market-repaired .sb-market-repair-change{font-size:11px;margin-top:5px;color:#94a3b8}
 .sb-market-repaired .sb-market-repair-change.up{color:#fb7185}.sb-market-repaired .sb-market-repair-change.down{color:#60a5fa}
+.sb-invest-entry{position:fixed;right:12px;top:12px;z-index:10000;border:1px solid rgba(34,197,94,.45);border-radius:999px;padding:8px 13px;background:rgba(6,78,59,.92);font-size:11px;font-weight:800;color:#ecfdf5;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.28)}
+.sb-invest-entry:hover{transform:translateY(-1px);border-color:rgba(134,239,172,.8)}
 .sb-live-status{position:fixed;right:12px;bottom:12px;z-index:9999;border:1px solid rgba(148,163,184,.3);border-radius:999px;padding:5px 9px;background:rgba(8,12,18,.92);font-size:10px;color:#94a3b8;box-shadow:0 4px 16px rgba(0,0,0,.25)}
 .sb-live-status.online{color:#86efac;border-color:rgba(134,239,172,.35)}.sb-live-status.connecting{color:#fde68a}.sb-live-status.offline{color:#fca5a5}
 .sb-live-quote{margin-top:8px;padding-top:8px;border-top:1px solid rgba(148,163,184,.16);display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
@@ -61,7 +63,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v10">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v11">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -121,7 +123,7 @@ const injection=String.raw`
     if(!grid||!grid.parentElement)return;
     var panel=document.querySelector('.sb-survival');
     if(!panel){
-      panel=document.createElement('section');panel.className='sb-survival';
+      panel=document.createElement('section');panel.className='sb-survival';panel.id='investment-window';
       panel.innerHTML='<div class="sb-survival-head"><div class="sb-survival-title">10만원 → 100만원 PAPER 생존 실험</div><div class="sb-survival-mode"></div></div><div class="sb-survival-grid"></div><div class="sb-survival-progress"><span></span></div><div class="sb-survival-positions"></div>';
       grid.parentElement.insertBefore(panel,grid);
     }
@@ -300,6 +302,22 @@ const injection=String.raw`
     host.style.cursor='pointer';
     host.addEventListener('click',function(){loadDetail(symbol,'QQQ');});
   }
+  function ensureInvestmentEntry(){
+    var btn=document.querySelector('.sb-invest-entry');
+    if(btn)return btn;
+    btn=document.createElement('button');
+    btn.type='button';
+    btn.className='sb-invest-entry';
+    btn.textContent='투자실험';
+    btn.title='10만원 → 100만원 PAPER 투자창 열기';
+    btn.addEventListener('click',function(){
+      location.hash='investment-window';
+      var panel=document.getElementById('investment-window');
+      if(panel)panel.scrollIntoView({behavior:'smooth',block:'start'});
+    });
+    document.body.appendChild(btn);
+    return btn;
+  }
   function statusEl(){
     var el=document.querySelector('.sb-live-status');
     if(!el){el=document.createElement('div');el.className='sb-live-status connecting';el.textContent='실시간 연결 중';document.body.appendChild(el);}
@@ -408,7 +426,18 @@ const injection=String.raw`
       if(Object.prototype.hasOwnProperty.call(labels,key))node.nodeValue=raw.replace(key,labels[key]);
     }
   }
-  function start(){replaceMarketLabels();repairMarket();setInterval(repairMarket,30000);setInterval(replaceMarketLabels,2000);}
+  function start(){
+    ensureInvestmentEntry();
+    replaceMarketLabels();
+    repairMarket().then(function(){
+      if(location.hash==='#investment-window'){
+        var panel=document.getElementById('investment-window');
+        if(panel)setTimeout(function(){panel.scrollIntoView({behavior:'smooth',block:'start'});},250);
+      }
+    });
+    setInterval(repairMarket,30000);
+    setInterval(replaceMarketLabels,2000);
+  }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();
 </script>`;
@@ -430,4 +459,4 @@ html=insertBeforeLastTag(html,'head',style);
 html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
-console.log('Applied StrategyBar WebSocket live quote enhancer v10 with survival paper account.');
+console.log('Applied StrategyBar WebSocket live quote enhancer v11 with investment entry button.');
