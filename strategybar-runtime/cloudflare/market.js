@@ -22,6 +22,8 @@ export function calculateSignal({price,previousClose,closes,highs,lows,volumes})
   const ma5=sma(closes,5),ma20=sma(closes,20),ma60=sma(closes,60),ma120=sma(closes,120);
   const momentum=rsi(closes),vol=volatility(closes),rv=volumes.filter(finite).slice(-21),cv=rv.at(-1),bv=average(rv.slice(0,-1)),vr=finite(cv)&&finite(bv)&&bv>0?cv/bv:null;
   const g20=finite(ma20)?(price/ma20-1)*100:null,g60=finite(ma60)?(price/ma60-1)*100:null,cp=finite(previousClose)&&previousClose!==0?(price/previousClose-1)*100:null;
+  const ret20=closes.length>20&&finite(closes.at(-21))&&Number(closes.at(-21))!==0?(price/Number(closes.at(-21))-1)*100:null;
+  const ret60=closes.length>60&&finite(closes.at(-61))&&Number(closes.at(-61))!==0?(price/Number(closes.at(-61))-1)*100:null;
   const lowSeries=lows.filter(finite),highSeries=highs.filter(finite);
   const support=Math.min(...lowSeries.slice(-20)),resistance=Math.max(...highSeries.slice(-20));
   const prior20High=highSeries.length>1?Math.max(...highSeries.slice(-21,-1)):null;
@@ -48,7 +50,7 @@ export function calculateSignal({price,previousClose,closes,highs,lows,volumes})
   if(turtleSignal!=="대기")reasons.push(`터틀 ${turtleSignal}`);
   if(finite(momentum))reasons.push(`RSI ${momentum.toFixed(0)}`);
   if(finite(vr))reasons.push(`20일 평균 대비 거래량 ${vr.toFixed(2)}배`);
-  return{changePct:round(cp),score,signal,rsi:round(momentum,1),ma5:round(ma5),ma20:round(ma20),ma60:round(ma60),ma120:round(ma120),ma20Gap:round(g20),ma60Gap:round(g60),maStack,turtleSignal,turtle20High:round(prior20High),turtle10Low:round(prior10Low),volumeRatio:round(vr),volatility20:round(vol,1),support:finite(support)?round(support):null,resistance:finite(resistance)?round(resistance):null,trend:finite(ma20)&&finite(ma60)?(price>ma20&&ma20>ma60?"상승":price<ma20&&ma20<ma60?"하락":"혼조"):"확인 중",reasons}
+  return{changePct:round(cp),return20:round(ret20),return60:round(ret60),score,signal,rsi:round(momentum,1),ma5:round(ma5),ma20:round(ma20),ma60:round(ma60),ma120:round(ma120),ma20Gap:round(g20),ma60Gap:round(g60),maStack,turtleSignal,turtle20High:round(prior20High),turtle10Low:round(prior10Low),volumeRatio:round(vr),volatility20:round(vol,1),support:finite(support)?round(support):null,resistance:finite(resistance)?round(resistance):null,trend:finite(ma20)&&finite(ma60)?(price>ma20&&ma20>ma60?"상승":price<ma20&&ma20<ma60?"하락":"혼조"):"확인 중",reasons}
 }
 function rollingValue(values,index,period,mode="avg"){
   const start=Math.max(0,index-period+1),slice=values.slice(start,index+1).filter(finite).map(Number);
