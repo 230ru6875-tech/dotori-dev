@@ -1,0 +1,107 @@
+name: StrategyBar Survival Paper Bot
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'strategybar-live/survival-paper-bot.py'
+      - '.github/workflows/strategybar-survival-paper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strategybar-survival-paper
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: self-hosted
+    env:
+      TARGET_URL: https://strategybar.hnr2020.workers.dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install survival paper bot
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 /opt/strategybar-survival
+          sudo install -d -m 0755 /var/lib/strategybar-survival
+          sudo install -m 0644 strategybar-live/survival-paper-bot.py /opt/strategybar-survival/survival-paper-bot.py
+
+          sudo tee /etc/strategybar-survival.env >/dev/null <<EOF
+          STRATEGYBAR_TARGET_URL=${TARGET_URL}
+          SURVIVAL_STATE_PATH=/var/lib/strategybar-survival/state.json
+          SURVIVAL_TRADES_PATH=/var/lib/strategybar-survival/trades.jsonl
+          SURVIVAL_START_KRW=100000
+          SURVIVAL_POLL_SECONDS=30
+          SURVIVAL_MAX_POSITIONS=2
+          SURVIVAL_MAX_POSITION_PCT=0.35
+          SURVIVAL_RISK_PER_TRADE=0.01
+          SURVIVAL_DAILY_LOSS_LIMIT=0.02
+          SURVIVAL_MAX_DRAWDOWN=0.08
+          SURVIVAL_HARD_KILL_DRAWDOWN=0.12
+          SURVIVAL_BASE_STOP_PCT=0.035
+          SURVIVAL_TAKE_PROFIT_PCT=0.07
+          SURVIVAL_TRAIL_START_PCT=0.04
+          SURVIVAL_TRAIL_GAP_PCT=0.03
+          SURVIVAL_ENTRY_SCORE=72
+          SURVIVAL_ENTRY_RISK_HEAD=55
+          SURVIVAL_ENTRY_REL_HEAD=55
+          EOF
+
+          sudo tee /etc/systemd/system/strategybar-survival-paper.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=StrategyBar autonomous 100k KRW survival paper bot
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/strategybar-survival
+          EnvironmentFile=/etc/strategybar-survival.env
+          ExecStart=/usr/bin/python3 /opt/strategybar-survival/survival-paper-bot.py
+          Restart=always
+          RestartSec=5
+          NoNewPrivileges=true
+          PrivateTmp=true
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          sudo chown -R ubuntu:ubuntu /var/lib/strategybar-survival
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now strategybar-survival-paper.service
+          sudo systemctl restart strategybar-survival-paper.service
+          sleep 8
+          sudo systemctl is-active --quiet strategybar-survival-paper.service
+          echo 'strategybar-survival-paper.service is active.'
+
+      - name: Validate paper bot state
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 6); do
+            if sudo test -f /var/lib/strategybar-survival/state.json; then break; fi
+            sleep 5
+          done
+          sudo test -f /var/lib/strategybar-survival/state.json
+          sudo cat /var/lib/strategybar-survival/state.json
+          sudo journalctl -u strategybar-survival-paper.service -n 30 --no-pager
+          python3 - <<'PY'
+          import json
+          p='/var/lib/strategybar-survival/state.json'
+          with open(p,encoding='utf-8') as f:
+              x=json.load(f)
+          assert x.get('mode')=='PAPER_ONLY'
+          assert float(x.get('equityKrw',0))>0
+          assert float(x.get('cashKrw',0))>=0
+          assert x.get('lastCycle')
+          print('paper-bot validation ok', x.get('equityKrw'), x.get('positions'))
+          PY
