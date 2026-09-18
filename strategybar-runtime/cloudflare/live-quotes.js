@@ -15,6 +15,15 @@ export class LiveQuotes {
     this.ctx = ctx;
     this.env = env;
     this.latest = new Map();
+    this.survivalPaperState = null;
+    this.survivalLoaded = false;
+  }
+
+  async survivalState() {
+    if (this.survivalLoaded) return this.survivalPaperState;
+    this.survivalPaperState = await this.ctx.storage.get("survival-paper-state") || null;
+    this.survivalLoaded = true;
+    return this.survivalPaperState;
   }
 
   async latestQuotes(symbols) {
@@ -105,12 +114,14 @@ export class LiveQuotes {
       let state;
       try { state = await request.json(); } catch { return json({ ok:false, error:"invalid json" },400); }
       const payload={...state,updatedAt:new Date().toISOString()};
+      this.survivalPaperState=payload;
+      this.survivalLoaded=true;
       await this.ctx.storage.put("survival-paper-state",payload);
       return json({ok:true,state:payload});
     }
 
     if (url.pathname === "/paper-latest") {
-      const state=await this.ctx.storage.get("survival-paper-state");
+      const state=await this.survivalState();
       return json({ok:true,state:state||null,at:new Date().toISOString()});
     }
 
