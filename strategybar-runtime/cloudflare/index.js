@@ -1,6 +1,7 @@
 export { LiveQuotes } from "./live-quotes.js";
 import { applyExternalSessionQuote, fetchHistorySeries, fetchMarketSnapshot, STOCKS } from "./market.js";
 import { handleMarketIngest } from "./ingest.js";
+import { getSurvivalState, handleSurvivalIngest } from "./survival.js";
 import { createAnalysis, createRuleBasedAnalysis } from "./openai.js";
 import { getCandidates, recordCandidateCycle, summarizeCandidateContext } from "./candidates.js";
 
@@ -321,6 +322,8 @@ export default {
         return env.LIVE_QUOTES.get(id).fetch(new Request(`https://live.internal/connect${url.search}`,request));
       }
       if (request.method==="POST"&&url.pathname==="/api/market-ingest") return await handleMarketIngest(request,env);
+      if (request.method==="POST"&&url.pathname==="/api/survival-ingest") return await handleSurvivalIngest(request,env);
+      if (request.method==="GET"&&url.pathname==="/api/survival") return await getSurvivalState(env);
       if (request.method==="GET"&&url.pathname==="/api/market") return await marketRoute(request,env);
       if (request.method==="GET"&&url.pathname==="/api/history") return await historyGet(request,env);
       if (request.method==="GET"&&url.pathname==="/api/candidates") return await candidatesGet(request,env);
