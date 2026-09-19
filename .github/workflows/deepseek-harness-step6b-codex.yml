@@ -27,7 +27,10 @@ jobs:
           set -euo pipefail
           echo '=== STEP 6F: INSTALL CODEX CLI ==='
           sudo env PATH="/usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/bin:/bin" npm install -g @openai/codex@latest
-          test -x /usr/local/bin/codex
+          CODEX_BIN="/opt/node-v24.21.0-linux-x64/bin/codex"
+          test -x "$CODEX_BIN"
+          sudo ln -sfn "$CODEX_BIN" /usr/local/bin/codex
+          command -v codex
           codex --version
 
       - name: Install Harness Codex subagent bundle in web profile
