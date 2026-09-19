@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'strategybar-live/survival-paper-bot.py'
+      - 'strategybar-live/twenty_candle_swing.py'
       - '.github/workflows/strategybar-survival-paper.yml'
   workflow_dispatch:
 
@@ -32,6 +33,8 @@ jobs:
           sudo install -d -m 0755 /opt/strategybar-survival
           sudo install -d -m 0755 /var/lib/strategybar-survival
           sudo install -m 0644 strategybar-live/survival-paper-bot.py /opt/strategybar-survival/survival-paper-bot.py
+          sudo install -m 0644 strategybar-live/twenty_candle_swing.py /opt/strategybar-survival/twenty_candle_swing.py
+          python3 -m py_compile strategybar-live/survival-paper-bot.py strategybar-live/twenty_candle_swing.py
 
           INGEST=''
           for src in /etc/strategybar-namuh.env /etc/strategybar-kis.env /etc/strategybar-alpaca.env; do
@@ -50,6 +53,9 @@ jobs:
           SURVIVAL_TRADES_PATH=/var/lib/strategybar-survival/trades.jsonl
           MARKET_INGEST_SECRET=${INGEST}
           SURVIVAL_PROFILE=FAST_SURVIVAL
+          SURVIVAL_STRATEGY=SWING20
+          SURVIVAL_SWING20_RANGE=5y
+          SURVIVAL_SWING20_CACHE_SECONDS=900
           SURVIVAL_BROKER=NAMUH
           SURVIVAL_START_KRW=100000
           SURVIVAL_TARGET_KRW=1000000
@@ -124,5 +130,9 @@ jobs:
           assert x.get('broker')=='NAMUH'
           assert x.get('activeBroker')=='NAMUH'
           assert float(x.get('targetKrw',0))==1000000
-          print('paper-bot validation ok', x.get('equityKrw'), x.get('positions'), 'broker', x.get('activeBroker'), 'progress', x.get('progressPct'))
+          assert x.get('strategyMode')=='SWING20'
+          assert x.get('strategyName')=='20캔들 스윙'
+          assert isinstance(x.get('strategySignals'),dict)
+          assert isinstance(x.get('strategyBacktests'),dict)
+          print('paper-bot validation ok', x.get('equityKrw'), x.get('positions'), 'broker', x.get('activeBroker'), 'strategy', x.get('strategyName'), 'progress', x.get('progressPct'))
           PY
