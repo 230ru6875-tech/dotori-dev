@@ -1,0 +1,113 @@
+name: DeepSeek Harness Step 3 Install
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step3-install.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: self-hosted
+    env:
+      HARNESS_DIR: /home/ubuntu/projects/deepseek-harness
+      HARNESS_REPO: https://github.com/deepseek-ai/deepseek-harness.git
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/bin:/bin
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@v4
+
+      - name: Clone official DeepSeek Harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 3A: CLONE OFFICIAL HARNESS ==='
+          node --version
+          pnpm --version
+          git --version
+
+          if [ -d "${HARNESS_DIR}/.git" ]; then
+            git -C "${HARNESS_DIR}" remote set-url origin "${HARNESS_REPO}"
+            git -C "${HARNESS_DIR}" fetch --depth=1 origin master
+            git -C "${HARNESS_DIR}" reset --hard origin/master
+            git -C "${HARNESS_DIR}" clean -fd
+          else
+            rm -rf "${HARNESS_DIR}"
+            git clone --depth=1 "${HARNESS_REPO}" "${HARNESS_DIR}"
+          fi
+
+          echo "origin=$(git -C "${HARNESS_DIR}" remote get-url origin)"
+          echo "commit=$(git -C "${HARNESS_DIR}" rev-parse HEAD)"
+          git -C "${HARNESS_DIR}" status --short
+
+      - name: Install dependencies
+        shell: bash
+        working-directory: /home/ubuntu/projects/deepseek-harness
+        run: |
+          set -euo pipefail
+          echo '=== STEP 3B: PNPM INSTALL ==='
+          pnpm install --frozen-lockfile
+
+      - name: Build DeepSeek Harness
+        shell: bash
+        working-directory: /home/ubuntu/projects/deepseek-harness
+        run: |
+          set -euo pipefail
+          echo '=== STEP 3C: BUILD ==='
+          pnpm run build
+
+      - name: Validate CLI and local Web UI
+        shell: bash
+        working-directory: /home/ubuntu/projects/deepseek-harness
+        run: |
+          set -euo pipefail
+          echo '=== STEP 3D: VALIDATE CLI ==='
+          pnpm dsh --help >/tmp/dsh-help.txt
+          head -n 40 /tmp/dsh-help.txt
+
+          echo '=== STEP 3E: LOCAL WEB SMOKE TEST ==='
+          rm -f /tmp/dsh-web.log /tmp/dsh-web.pid
+          (
+            exec pnpm dsh web --no-open > /tmp/dsh-web.log 2>&1
+          ) &
+          PID=$!
+          echo "$PID" >/tmp/dsh-web.pid
+
+          cleanup() {
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          OK=0
+          for i in $(seq 1 45); do
+            if curl -fsS --max-time 2 http://127.0.0.1:3080/ -o /tmp/dsh-home.html; then
+              OK=1
+              break
+            fi
+            if ! kill -0 "$PID" 2>/dev/null; then
+              echo 'Harness process exited unexpectedly.'
+              cat /tmp/dsh-web.log
+              exit 31
+            fi
+            sleep 1
+          done
+
+          if [ "$OK" -ne 1 ]; then
+            echo 'Harness Web UI did not become ready in time.'
+            cat /tmp/dsh-web.log
+            exit 32
+          fi
+
+          test -s /tmp/dsh-home.html
+          echo "web_bytes=$(wc -c < /tmp/dsh-home.html)"
+          ss -ltnp 2>/dev/null | grep ':3080 ' || true
+          echo
+          echo '--- HARNESS LOG ---'
+          tail -n 80 /tmp/dsh-web.log
+          echo
+          echo '=== STEP 3 COMPLETE ==='
