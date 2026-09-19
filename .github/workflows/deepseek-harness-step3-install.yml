@@ -105,11 +105,16 @@ jobs:
 
           OK=0
           TOKEN_URL=''
+          rm -f /tmp/dsh-cookies.txt
           for i in $(seq 1 45); do
             TOKEN_URL=$(grep -Eo 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' /tmp/dsh-web.log | tail -n1 || true)
-            if [ -n "$TOKEN_URL" ] && curl -fLsS --max-time 4 "$TOKEN_URL" -o /tmp/dsh-home.html; then
-              OK=1
-              break
+            if [ -n "$TOKEN_URL" ]; then
+              if curl -sS --max-time 4 -c /tmp/dsh-cookies.txt -o /dev/null "$TOKEN_URL"; then
+                if curl -fsS --max-time 4 -b /tmp/dsh-cookies.txt http://127.0.0.1:3080/ -o /tmp/dsh-home.html; then
+                  OK=1
+                  break
+                fi
+              fi
             fi
             if ! kill -0 "$PID" 2>/dev/null; then
               echo 'Harness process exited unexpectedly.'
