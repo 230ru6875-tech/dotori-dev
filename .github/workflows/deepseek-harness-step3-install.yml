@@ -52,12 +52,32 @@ jobs:
           echo '=== STEP 3B: PNPM INSTALL ==='
           pnpm install --frozen-lockfile
 
+      - name: Ensure build swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 3C: ENSURE SWAP FOR BUILD ==='
+          if ! swapon --show --noheadings | grep -q .; then
+            if [ ! -f /swapfile ]; then
+              sudo fallocate -l 6G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=6144 status=progress
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+            fi
+            sudo swapon /swapfile
+          fi
+          if ! grep -qE '^/swapfile\s' /etc/fstab; then
+            echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+          fi
+          echo '--- MEMORY AFTER SWAP ---'
+          free -h
+          swapon --show
+
       - name: Build DeepSeek Harness
         shell: bash
         working-directory: /home/ubuntu/projects/deepseek-harness
         run: |
           set -euo pipefail
-          echo '=== STEP 3C: BUILD ==='
+          echo '=== STEP 3D: BUILD ==='
           pnpm run build
 
       - name: Validate CLI and local Web UI
@@ -65,11 +85,11 @@ jobs:
         working-directory: /home/ubuntu/projects/deepseek-harness
         run: |
           set -euo pipefail
-          echo '=== STEP 3D: VALIDATE CLI ==='
+          echo '=== STEP 3E: VALIDATE CLI ==='
           pnpm dsh --help >/tmp/dsh-help.txt
           head -n 40 /tmp/dsh-help.txt
 
-          echo '=== STEP 3E: LOCAL WEB SMOKE TEST ==='
+          echo '=== STEP 3F: LOCAL WEB SMOKE TEST ==='
           rm -f /tmp/dsh-web.log /tmp/dsh-web.pid
           (
             exec pnpm dsh web --no-open > /tmp/dsh-web.log 2>&1
