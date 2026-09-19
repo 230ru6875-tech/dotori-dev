@@ -18,8 +18,23 @@ function cleanState(input={}){
   const positions=Object.fromEntries(Object.entries(input.positions||{}).slice(0,10).map(([symbol,p])=>[String(symbol).toUpperCase(),{
     symbol:String(p?.symbol||symbol).toUpperCase(),
     entryAt:p?.entryAt||null,entryPrice:Number(p?.entryPrice||0),lastPrice:Number(p?.lastPrice||0),shares:Number(p?.shares||0),
-    costKrw:Number(p?.costKrw||0),stopPrice:Number(p?.stopPrice||0),highPrice:Number(p?.highPrice||0),
-    entryScore:Number(p?.entryScore||0),broker:String(p?.broker||broker).toUpperCase(),marketRegime:p?.marketRegime||null
+    costKrw:Number(p?.costKrw||0),stopPrice:Number(p?.stopPrice||0),takeProfitPrice:Number(p?.takeProfitPrice||0),highPrice:Number(p?.highPrice||0),
+    entryScore:Number(p?.entryScore||0),broker:String(p?.broker||broker).toUpperCase(),marketRegime:p?.marketRegime||null,
+    strategy:String(p?.strategy||""),strategySignalDate:p?.strategySignalDate||null
+  }]));
+  const strategySignals=Object.fromEntries(Object.entries(input.strategySignals||{}).slice(0,12).map(([symbol,x])=>[String(symbol).toUpperCase(),{
+    ready:Boolean(x?.ready),signal:Boolean(x?.signal),date:x?.date||null,blueZone:Boolean(x?.blueZone),
+    high120:Number(x?.high120||0),high20Shift30:Number(x?.high20Shift30||0),ma60:Number(x?.ma60||0),
+    bullish:Boolean(x?.bullish),crossUpMa60:Boolean(x?.crossUpMa60),volumeRatioPrev:Number(x?.volumeRatioPrev||0),
+    signalLow:Number(x?.signalLow||0),signalClose:Number(x?.signalClose||0),lastSignalDate:x?.lastSignalDate||null,
+    barsSinceLastSignal:x?.barsSinceLastSignal==null?null:Number(x.barsSinceLastSignal),rule:String(x?.rule||"")
+  }]));
+  const strategyBacktests=Object.fromEntries(Object.entries(input.strategyBacktests||{}).slice(0,12).map(([symbol,x])=>[String(symbol).toUpperCase(),{
+    ready:Boolean(x?.ready),trades:Number(x?.trades||0),wins:Number(x?.wins||0),losses:Number(x?.losses||0),
+    winRate:x?.winRate==null?null:Number(x.winRate),profitFactor:x?.profitFactor==null?null:Number(x.profitFactor),
+    totalReturnPct:Number(x?.totalReturnPct||0),maxDrawdownPct:Number(x?.maxDrawdownPct||0),
+    avgTradePct:Number(x?.avgTradePct||0),expectancyCash:Number(x?.expectancyCash||0),
+    initialCapital:Number(x?.initialCapital||0),endingCapital:Number(x?.endingCapital||0),rules:x?.rules||null
   }]));
   return {
     mode:"PAPER_ONLY",
@@ -36,7 +51,13 @@ function cleanState(input={}){
     drawdownPct:Number(input.drawdownPct||0),dayLossPct:Number(input.dayLossPct||0),
     killSwitch:Boolean(input.killSwitch),goalReached:Boolean(input.goalReached),
     paused:Boolean(input.paused),lastCycle:input.lastCycle||new Date().toISOString(),
-    usdKrw:Number(input.usdKrw||0),updatedAt:new Date().toISOString()
+    usdKrw:Number(input.usdKrw||0),
+    strategyName:String(input.strategyName||""),
+    strategyMode:String(input.strategyMode||""),
+    strategySpec:input.strategySpec||null,
+    strategySignals,
+    strategyBacktests,
+    updatedAt:new Date().toISOString()
   };
 }
 export async function handleSurvivalIngest(request,env){
