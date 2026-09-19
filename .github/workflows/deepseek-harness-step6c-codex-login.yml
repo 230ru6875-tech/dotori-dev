@@ -35,3 +35,17 @@ jobs:
           RC=$?
           set -e
           echo "status_exit=${RC}"
+          test "${RC}" -eq 0
+
+      - name: Run authenticated Codex read-only smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== CODEX AUTHENTICATED SMOKE ==='
+          OUT=/tmp/codex-ec2-smoke.txt
+          rm -f "$OUT"
+          timeout 180s codex exec             --ephemeral             --sandbox read-only             --cd /home/ubuntu/projects/harness-workspaces/dotori-dev             --output-last-message "$OUT"             "Read AGENTS.md in this repository. Do not modify any file. Reply with exactly CODEX_EC2_OK."
+          test -s "$OUT"
+          cat "$OUT"
+          grep -Fxq 'CODEX_EC2_OK' "$OUT"
+          echo 'codex_workspace_smoke=PASS'
