@@ -599,7 +599,7 @@ html=insertBeforeLastTag(html,'body',injection);
 if((html.match(/id="strategybar-enhancer-script"/g)||[]).length!==1)throw new Error('enhancer marker count invalid');
 fs.writeFileSync(path,html);
 
-const investmentHtml=String.raw`<!doctype html>
+const investmentHtml=String.raw\`<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
@@ -620,6 +620,8 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
 .strategy-rule{border:1px solid #1f2937;border-radius:8px;padding:8px;background:#0b1220;font-size:11px;color:#cbd5e1}
 .strategy-rule b{color:#f8fafc}.strategy-rule code{display:block;margin-top:4px;color:#93c5fd;white-space:normal;overflow-wrap:anywhere}
 .signal-yes{color:#86efac;font-weight:800}.signal-no{color:#94a3b8}.bt-good{color:#86efac}.bt-bad{color:#fca5a5}
+.scroll{overflow-x:auto}
+@media(max-width:760px){.wrap{padding:10px}h1{font-size:18px}.value{font-size:17px}table{min-width:820px}.strategy-rules{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -631,12 +633,14 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
   <div id="mode" class="badge">상태 확인 중…</div>
   <div class="grid" id="cards"></div>
   <div class="progress"><span id="bar"></span></div>
+
   <div class="section">
     <h2>전략 · 20캔들 스윙</h2>
     <div id="strategyRules" class="strategy-rules"><div class="empty">전략 불러오는 중…</div></div>
-    <div id="strategySignals"><div class="empty">신호/백테스트 불러오는 중…</div></div>
+    <div class="scroll"><div id="strategySignals"><div class="empty">신호/백테스트 불러오는 중…</div></div></div>
   </div>
-  <div class="section"><h2>보유 종목 (PAPER)</h2><div id="positions"><div class="empty">불러오는 중…</div></div></div>
+
+  <div class="section"><h2>보유 종목 (PAPER)</h2><div class="scroll"><div id="positions"><div class="empty">불러오는 중…</div></div></div></div>
   <div class="section"><h2>상태</h2><div id="status" class="empty">불러오는 중…</div></div>
 </div>
 <script>
@@ -644,25 +648,8 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
   var money=function(v){return Number(v||0).toLocaleString('ko-KR',{maximumFractionDigits:0})+'원';};
   var num=function(v,d){return Number(v||0).toFixed(d===undefined?2:d);};
 
-  function renderState(s,stale){
-    var mode=document.getElementById('mode');
-    mode.textContent=(stale?'최근 저장값 · ':'')+(s.profile||'FAST_SURVIVAL')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
-    mode.className='badge'+(s.killSwitch?' warn':'');
-    var cards=[
-      ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
-      ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
-      ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
-      ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
-    ];
-    var host=document.getElementById('cards');host.innerHTML='';
-    cards.forEach(function(c){
-      var d=document.createElement('div');d.className='card';
-      d.innerHTML='<div class="label"></div><div class="value"></div>';
-      d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);
-    });
-    document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
-
-    var spec=s.strategySpec||{},sourceRules=(spec.sourceEntryRules||{}),paperRules=(spec.paperBacktestRules||{});
+  function renderStrategy(s){
+    var spec=s.strategySpec||{},sourceRules=spec.sourceEntryRules||{},paperRules=spec.paperBacktestRules||{};
     var rules=document.getElementById('strategyRules');
     var ruleRows=[
       ['① 120봉 최고가',sourceRules.high120||'max(high[i-119:i+1])'],
@@ -678,38 +665,61 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
     rules.innerHTML+='<div class="strategy-rule"><b>익절/추적</b><code>'+(paperRules.takeProfit||'2R')+' · '+(paperRules.trail||'after +1R, prior 10-bar low')+'</code></div>';
 
     var signals=s.strategySignals||{},backtests=s.strategyBacktests||{},symbols=Object.keys(signals);
-    var sh=document.getElementById('strategySignals');
+    var host=document.getElementById('strategySignals');
     if(!symbols.length){
-      sh.innerHTML='<div class="empty">후보 종목의 20캔들 전략 데이터를 계산 중입니다.</div>';
-    }else{
-      var html='<table><thead><tr><th>티커</th><th>푸른존</th><th>60선돌파</th><th>거래량배수</th><th>매수신호</th><th>최근신호</th><th>백테스트</th></tr></thead><tbody>';
-      symbols.forEach(function(sym){
-        var x=signals[sym]||{},bt=backtests[sym]||{};
-        var win=bt.winRate==null?'--':(Number(bt.winRate)*100).toFixed(0)+'%';
-        var ret=bt.ready?((Number(bt.totalReturnPct)>=0?'+':'')+Number(bt.totalReturnPct||0).toFixed(1)+'%'):'--';
-        var cls=bt.ready&&Number(bt.totalReturnPct)>=0?'bt-good':'bt-bad';
-        html+='<tr><td><b>'+sym+'</b></td><td>'+(x.blueZone?'YES':'-')+'</td><td>'+(x.crossUpMa60?'YES':'-')+'</td><td>'+(Number(x.volumeRatioPrev||0)>0?Number(x.volumeRatioPrev).toFixed(2)+'x':'--')+'</td><td class="'+(x.signal?'signal-yes':'signal-no')+'">'+(x.signal?'매수신호':'대기')+'</td><td>'+(x.lastSignalDate||'--')+'</td><td class="'+cls+'">'+(bt.trades||0)+'회 · 승률 '+win+' · '+ret+'</td></tr>';
-      });
-      sh.innerHTML=html+'</tbody></table><div class="muted">백테스트는 신호 확정 후 다음 봉 시가 진입, 신호봉 저가/최대 -7% 손절, 2R 익절, +1R 이후 10봉 저가 추적, 60일선 종가 이탈 시 다음 봉 시가 청산, 최대 120봉 보유를 사용합니다. 이 청산 규칙은 영상에 수치가 제시되지 않아 PAPER 검증용으로 명시한 규칙입니다.</div>';
+      host.innerHTML='<div class="empty">후보 종목의 20캔들 전략 데이터를 계산 중입니다.</div>';
+      return;
     }
+    var html='<table><thead><tr><th>티커</th><th>푸른존</th><th>60선돌파</th><th>거래량배수</th><th>매수신호</th><th>최근신호</th><th>백테스트</th></tr></thead><tbody>';
+    symbols.forEach(function(sym){
+      var x=signals[sym]||{},bt=backtests[sym]||{};
+      var win=bt.winRate==null?'--':(Number(bt.winRate)*100).toFixed(0)+'%';
+      var ret=bt.ready?((Number(bt.totalReturnPct)>=0?'+':'')+Number(bt.totalReturnPct||0).toFixed(1)+'%'):'--';
+      var cls=bt.ready&&Number(bt.totalReturnPct)>=0?'bt-good':'bt-bad';
+      html+='<tr><td><b>'+sym+'</b></td><td>'+(x.blueZone?'YES':'-')+'</td><td>'+(x.crossUpMa60?'YES':'-')+'</td><td>'+(Number(x.volumeRatioPrev||0)>0?Number(x.volumeRatioPrev).toFixed(2)+'x':'--')+'</td><td class="'+(x.signal?'signal-yes':'signal-no')+'">'+(x.signal?'매수신호':'대기')+'</td><td>'+(x.lastSignalDate||'--')+'</td><td class="'+cls+'">'+(bt.trades||0)+'회 · 승률 '+win+' · '+ret+'</td></tr>';
+    });
+    host.innerHTML=html+'</tbody></table><div class="muted">PAPER 검증 규칙: 신호 확정 후 다음 봉 시가 진입 · 신호봉 저가와 최대 -7% 중 더 가까운 가격을 초기 손절 · 2R 익절 · +1R 이후 직전 10봉 저가 추적 · 종가가 SMA60 아래면 다음 봉 시가 청산 · 최대 120봉 보유 · 편도 비용 10bp. 영상에는 숫자형 청산 규칙이 없어 이 부분은 검증용으로 별도 정의했습니다.</div>';
+  }
+
+  function renderState(s,stale){
+    var mode=document.getElementById('mode');
+    mode.textContent=(stale?'최근 저장값 · ':'')+(s.profile||'FAST_SURVIVAL')+' · '+(s.strategyName||'20캔들 스윙')+' · 브로커 '+(s.activeBroker||s.broker||'NAMUH')+(s.killSwitch?' · KILL SWITCH':'')+(s.goalReached?' · 목표달성':'');
+    mode.className='badge'+(s.killSwitch?' warn':'');
+    var cards=[
+      ['평가자산',money(s.equityKrw)],['현금',money(s.cashKrw)],['시작자금',money(s.startKrw)],
+      ['목표',money(s.targetKrw)],['진행률',num(s.progressPct)+'%'],['자산배수',num(s.equityMultiple,3)+'x'],
+      ['최대낙폭',num(s.drawdownPct)+'%'],['당일손실',num(s.dayLossPct)+'%'],
+      ['거래',String(s.trades||0)+'회'],['승/패',String(s.wins||0)+' / '+String(s.losses||0)]
+    ];
+    var cardsHost=document.getElementById('cards');cardsHost.innerHTML='';
+    cards.forEach(function(c){
+      var d=document.createElement('div');d.className='card';
+      d.innerHTML='<div class="label"></div><div class="value"></div>';
+      d.children[0].textContent=c[0];d.children[1].textContent=c[1];cardsHost.appendChild(d);
+    });
+    document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
+    renderStrategy(s);
 
     var pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
     if(!pos.length){
       ph.innerHTML='<div class="empty">보유 종목 없음</div>';
     }else{
-      var html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
+      var html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절/익절</th><th>브로커</th></tr></thead><tbody>';
       pos.forEach(function(x){
-        html+='<tr><td>'+String(x.symbol||'')+(x.strategy?' <span class="muted">'+x.strategy+'</span>':'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>
+        var strategy=x.strategy?' · '+x.strategy:'';
+        var tp=Number(x.takeProfitPrice||0)>0?' / TP $'+Number(x.takeProfitPrice).toFixed(2):'';
+        html+='<tr><td>'+String(x.symbol||'')+strategy+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>$'+Number(x.entryPrice||0).toFixed(2)+'</td><td>$'+Number(x.lastPrice||0).toFixed(2)+'</td><td>$'+Number(x.stopPrice||0).toFixed(2)+tp+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';
       });
       ph.innerHTML=html+'</tbody></table>';
     }
+
     document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
   }
 
   async function load(){
     var mode=document.getElementById('mode');
     var cached=null;
-    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
+    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v2')||'null');}catch(e){}
     if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
 
     var controller=new AbortController();
@@ -719,7 +729,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
       if(!r.ok)throw new Error('HTTP '+r.status);
       var p=await r.json(),state=p&&p.state;
       if(!state)throw new Error('state empty');
-      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
+      localStorage.setItem('strategybar_survival_state_v2',JSON.stringify(state));
       renderState(state,false);
     }catch(e){
       if(!cached){
@@ -727,9 +737,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
         mode.className='badge warn';
         document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
       }
-    }finally{
-      clearTimeout(timer);
-    }
+    }finally{clearTimeout(timer);}
   }
 
   document.getElementById('refresh').onclick=load;
@@ -738,7 +746,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
   setInterval(load,10000);
 })();
 </script>
-</body></html>`;
+</body></html>\`;
 
 const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
 if(!investmentScript)throw new Error('investment script extraction failed');
@@ -748,199 +756,3 @@ execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
 fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
 
 console.log('Applied StrategyBar WebSocket live quote enhancer v16 with 20-candle swing strategy panel.');
-+Number(x.entryPrice||0).toFixed(2)+'</td><td>
-      });
-      ph.innerHTML=html+'</tbody></table>';
-    }
-    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-  }
-
-  async function load(){
-    var mode=document.getElementById('mode');
-    var cached=null;
-    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
-    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
-
-    var controller=new AbortController();
-    var timer=setTimeout(function(){controller.abort();},3500);
-    try{
-      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      var p=await r.json(),state=p&&p.state;
-      if(!state)throw new Error('state empty');
-      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
-      renderState(state,false);
-    }catch(e){
-      if(!cached){
-        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
-        mode.className='badge warn';
-        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
-      }
-    }finally{
-      clearTimeout(timer);
-    }
-  }
-
-  document.getElementById('refresh').onclick=load;
-  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
-  load();
-  setInterval(load,10000);
-})();
-</script>
-</body></html>`;
-
-const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
-if(!investmentScript)throw new Error('investment script extraction failed');
-const investmentCheck='/tmp/strategybar-investment-check.js';
-fs.writeFileSync(investmentCheck,investmentScript[1]);
-execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
-+Number(x.lastPrice||0).toFixed(2)+'</td><td>
-      });
-      ph.innerHTML=html+'</tbody></table>';
-    }
-    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-  }
-
-  async function load(){
-    var mode=document.getElementById('mode');
-    var cached=null;
-    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
-    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
-
-    var controller=new AbortController();
-    var timer=setTimeout(function(){controller.abort();},3500);
-    try{
-      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      var p=await r.json(),state=p&&p.state;
-      if(!state)throw new Error('state empty');
-      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
-      renderState(state,false);
-    }catch(e){
-      if(!cached){
-        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
-        mode.className='badge warn';
-        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
-      }
-    }finally{
-      clearTimeout(timer);
-    }
-  }
-
-  document.getElementById('refresh').onclick=load;
-  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
-  load();
-  setInterval(load,10000);
-})();
-</script>
-</body></html>`;
-
-const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
-if(!investmentScript)throw new Error('investment script extraction failed');
-const investmentCheck='/tmp/strategybar-investment-check.js';
-fs.writeFileSync(investmentCheck,investmentScript[1]);
-execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
-+Number(x.stopPrice||0).toFixed(2)+(Number(x.takeProfitPrice||0)>0?' / TP 
-      });
-      ph.innerHTML=html+'</tbody></table>';
-    }
-    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-  }
-
-  async function load(){
-    var mode=document.getElementById('mode');
-    var cached=null;
-    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
-    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
-
-    var controller=new AbortController();
-    var timer=setTimeout(function(){controller.abort();},3500);
-    try{
-      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      var p=await r.json(),state=p&&p.state;
-      if(!state)throw new Error('state empty');
-      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
-      renderState(state,false);
-    }catch(e){
-      if(!cached){
-        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
-        mode.className='badge warn';
-        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
-      }
-    }finally{
-      clearTimeout(timer);
-    }
-  }
-
-  document.getElementById('refresh').onclick=load;
-  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
-  load();
-  setInterval(load,10000);
-})();
-</script>
-</body></html>`;
-
-const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
-if(!investmentScript)throw new Error('investment script extraction failed');
-const investmentCheck='/tmp/strategybar-investment-check.js';
-fs.writeFileSync(investmentCheck,investmentScript[1]);
-execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
-+Number(x.takeProfitPrice).toFixed(2):'')+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';
-      });
-      ph.innerHTML=html+'</tbody></table>';
-    }
-    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
-  }
-
-  async function load(){
-    var mode=document.getElementById('mode');
-    var cached=null;
-    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
-    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
-
-    var controller=new AbortController();
-    var timer=setTimeout(function(){controller.abort();},3500);
-    try{
-      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
-      if(!r.ok)throw new Error('HTTP '+r.status);
-      var p=await r.json(),state=p&&p.state;
-      if(!state)throw new Error('state empty');
-      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
-      renderState(state,false);
-    }catch(e){
-      if(!cached){
-        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
-        mode.className='badge warn';
-        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
-      }
-    }finally{
-      clearTimeout(timer);
-    }
-  }
-
-  document.getElementById('refresh').onclick=load;
-  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
-  load();
-  setInterval(load,10000);
-})();
-</script>
-</body></html>`;
-
-const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
-if(!investmentScript)throw new Error('investment script extraction failed');
-const investmentCheck='/tmp/strategybar-investment-check.js';
-fs.writeFileSync(investmentCheck,investmentScript[1]);
-execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
-fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
-
-console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
