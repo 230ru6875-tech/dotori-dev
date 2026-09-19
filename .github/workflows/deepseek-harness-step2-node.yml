@@ -1,0 +1,89 @@
+name: DeepSeek Harness Step 2 Node
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step2-node.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node 24 and pnpm 11.7.0 on EC2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NODE_VERSION="24.21.0"
+          NODE_DIR="/opt/node-v${NODE_VERSION}-linux-x64"
+          NODE_TARBALL="node-v${NODE_VERSION}-linux-x64.tar.xz"
+          NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
+
+          echo '=== STEP 2: INSTALL NODE 24 + PNPM ==='
+          sudo install -d -m 0755 /opt
+
+          if [ ! -x "${NODE_DIR}/bin/node" ]; then
+            cd /tmp
+            curl -fL --retry 4 --retry-delay 2 "${NODE_URL}" -o "${NODE_TARBALL}"
+            curl -fL --retry 4 --retry-delay 2 "${NODE_URL}.sha256" -o "${NODE_TARBALL}.sha256" || true
+
+            if [ -s "${NODE_TARBALL}.sha256" ]; then
+              EXPECTED=$(awk '{print $1}' "${NODE_TARBALL}.sha256")
+              ACTUAL=$(sha256sum "${NODE_TARBALL}" | awk '{print $1}')
+              test "${EXPECTED}" = "${ACTUAL}"
+            fi
+
+            sudo rm -rf "${NODE_DIR}"
+            sudo tar -xJf "${NODE_TARBALL}" -C /opt
+          fi
+
+          sudo ln -sfn "${NODE_DIR}/bin/node" /usr/local/bin/node
+          sudo ln -sfn "${NODE_DIR}/bin/npm" /usr/local/bin/npm
+          sudo ln -sfn "${NODE_DIR}/bin/npx" /usr/local/bin/npx
+
+          if [ -x "${NODE_DIR}/bin/corepack" ]; then
+            sudo ln -sfn "${NODE_DIR}/bin/corepack" /usr/local/bin/corepack
+          else
+            sudo "${NODE_DIR}/bin/npm" install -g corepack@0.34.6
+            sudo ln -sfn "${NODE_DIR}/bin/corepack" /usr/local/bin/corepack
+          fi
+
+          export PATH="/usr/local/bin:${NODE_DIR}/bin:$PATH"
+
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+
+          if [ -x "${NODE_DIR}/bin/pnpm" ]; then
+            sudo ln -sfn "${NODE_DIR}/bin/pnpm" /usr/local/bin/pnpm
+          fi
+          if [ -x "${NODE_DIR}/bin/pnpx" ]; then
+            sudo ln -sfn "${NODE_DIR}/bin/pnpx" /usr/local/bin/pnpx
+          fi
+
+          echo
+          echo '--- INSTALLED VERSIONS ---'
+          echo "node=$(command -v node) $(node --version)"
+          echo "npm=$(command -v npm) $(npm --version)"
+          echo "corepack=$(command -v corepack) $(corepack --version)"
+          echo "pnpm=$(command -v pnpm) $(pnpm --version)"
+
+          test "$(node --version)" = "v${NODE_VERSION}"
+          test "$(pnpm --version)" = "11.7.0"
+
+          echo
+          echo '--- PATH PRECEDENCE ---'
+          type -a node
+          type -a npm
+          type -a corepack
+          type -a pnpm
+
+          echo
+          echo '=== STEP 2 COMPLETE ==='
