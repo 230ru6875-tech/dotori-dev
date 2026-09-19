@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib, hmac, json, os, time, urllib.request
 from datetime import datetime, timezone
+from twenty_candle_swing import backtest as swing20_backtest, latest_signal as swing20_latest_signal, strategy_spec as swing20_strategy_spec
 
 TARGET=os.getenv("STRATEGYBAR_TARGET_URL","https://strategybar.hnr2020.workers.dev").rstrip("/")
 STATE_PATH=os.getenv("SURVIVAL_STATE_PATH","/var/lib/strategybar-survival/state.json")
@@ -29,8 +30,12 @@ ENTRY_SCORE=float(os.getenv("SURVIVAL_ENTRY_SCORE","68"))
 ENTRY_RISK_HEAD=float(os.getenv("SURVIVAL_ENTRY_RISK_HEAD","52"))
 ENTRY_REL_HEAD=float(os.getenv("SURVIVAL_ENTRY_REL_HEAD","52"))
 MIN_PATTERN_SUCCESS=float(os.getenv("SURVIVAL_MIN_PATTERN_SUCCESS","0.50"))
+STRATEGY_MODE=os.getenv("SURVIVAL_STRATEGY","SWING20").strip().upper()
+SWING20_HISTORY_RANGE=os.getenv("SURVIVAL_SWING20_RANGE","5y").strip()
+SWING20_CACHE_SECONDS=max(300,int(os.getenv("SURVIVAL_SWING20_CACHE_SECONDS","900")))
 
 BROKERS=("NAMUH","KIS","TOSS")
+_SWING20_CACHE={}
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -88,6 +93,9 @@ def post_state(state):
         "drawdownPct":state.get("drawdownPct",0),"dayLossPct":state.get("dayLossPct",0),
         "killSwitch":state.get("killSwitch",False),"goalReached":state.get("goalReached",False),
         "paused":time.time()<float(state.get("pausedUntil",0)),"lastCycle":state.get("lastCycle"),"usdKrw":state.get("usdKrw",0),
+        "strategyName":state.get("strategyName"),"strategyMode":state.get("strategyMode"),
+        "strategySpec":state.get("strategySpec"),"strategySignals":state.get("strategySignals",{}),
+        "strategyBacktests":state.get("strategyBacktests",{}),
     }
     raw=json.dumps(payload,ensure_ascii=False,separators=(",",":"))
     ts=str(int(time.time()))
@@ -100,6 +108,25 @@ def post_state(state):
     except Exception as e:
         print(now_iso(),"state_publish_error",repr(e),flush=True)
         return False
+
+def swing20_for_symbol(symbol):
+    key=str(symbol or "").upper()
+    if not key:
+        return {"ready":False,"signal":False,"reason":"symbol_missing","backtest":{"ready":False}}
+    now_ts=time.time()
+    cached=_SWING20_CACHE.get(key)
+    if cached and now_ts-float(cached.get("_cachedAt",0))<SWING20_CACHE_SECONDS:
+        return cached
+    try:
+        payload=http_json("/api/history?symbol="+key+"&benchmark=QQQ&range="+SWING20_HISTORY_RANGE+"&t="+str(int(now_ts)))
+        rows=payload.get("rows") or []
+        latest=swing20_latest_signal(rows)
+        bt=swing20_backtest(rows,initial_capital=START_KRW,risk_per_trade=RISK_PER_TRADE,max_position_pct=MAX_POSITION_PCT)
+        result={"symbol":key,"latest":latest,"backtest":bt,"spec":swing20_strategy_spec(),"_cachedAt":now_ts}
+    except Exception as e:
+        result={"symbol":key,"latest":{"ready":False,"signal":False,"reason":str(e)},"backtest":{"ready":False,"reason":str(e)},"spec":swing20_strategy_spec(),"_cachedAt":now_ts}
+    _SWING20_CACHE[key]=result
+    return result
 
 def get_usdkrw(market):
     for row in market or []:
@@ -184,9 +211,10 @@ def manage_positions(state,quotes,fx):
         stop=float(p.get("stopPrice",entry*(1-BASE_STOP_PCT)))
         if ret>=TRAIL_START_PCT:
             stop=max(stop,high*(1-TRAIL_GAP_PCT)); p["stopPrice"]=stop
+        take_profit=float(p.get("takeProfitPrice") or (entry*(1+TAKE_PROFIT_PCT)))
         if price<=stop:
             close_position(state,sym,price,fx,"stop_or_trailing")
-        elif ret>=TAKE_PROFIT_PCT:
+        elif price>=take_profit:
             close_position(state,sym,price,fx,"take_profit")
 
 def candidate_ok(c):
@@ -222,14 +250,36 @@ def maybe_enter(state,candidates,quotes,fx,equity,broker):
         if slots<=0:break
         sym=str(c.get("symbol") or "").upper()
         if not sym or sym in state["positions"] or not candidate_ok(c):continue
+
+        swing=swing20_for_symbol(sym) if STRATEGY_MODE=="SWING20" else None
+        if STRATEGY_MODE=="SWING20":
+            latest=(swing or {}).get("latest") or {}
+            state.setdefault("strategySignals",{})[sym]=latest
+            state.setdefault("strategyBacktests",{})[sym]=(swing or {}).get("backtest") or {}
+            if not latest.get("signal"):
+                continue
+
         q=quotes.get(sym) or {}
         try: price=float(q.get("price"))
         except Exception: continue
         if price<=0:continue
+
         risk_fraction=adaptive_risk_fraction(state,c,equity)
+        if STRATEGY_MODE=="SWING20" and swing:
+            latest=swing.get("latest") or {}
+            signal_low=float(latest.get("signalLow") or 0)
+            structural_stop=max(signal_low if signal_low>0 else 0,price*(1-0.07))
+            if structural_stop>=price: structural_stop=price*(1-0.02)
+            stop_pct=max(0.005,(price-structural_stop)/price)
+            take_profit=price+2*(price-structural_stop)
+        else:
+            structural_stop=price*(1-BASE_STOP_PCT)
+            stop_pct=BASE_STOP_PCT
+            take_profit=price*(1+TAKE_PROFIT_PCT)
+
         risk_budget_krw=equity*risk_fraction
         max_position_krw=equity*MAX_POSITION_PCT
-        sized_by_risk=risk_budget_krw/max(BASE_STOP_PCT,0.005)
+        sized_by_risk=risk_budget_krw/max(stop_pct,0.005)
         notional_krw=min(max_position_krw,sized_by_risk,float(state["cashKrw"])*0.97)
         if notional_krw<5000:continue
         shares=notional_krw/(price*fx)
@@ -237,15 +287,18 @@ def maybe_enter(state,candidates,quotes,fx,equity,broker):
         state["cashKrw"]-=cost
         state["positions"][sym]={
             "symbol":sym,"entryAt":now_iso(),"entryPrice":price,"shares":shares,"costKrw":cost,
-            "stopPrice":price*(1-BASE_STOP_PCT),"highPrice":price,"lastPrice":price,
+            "stopPrice":structural_stop,"takeProfitPrice":take_profit,"highPrice":price,"lastPrice":price,
             "entryScore":c.get("adjustedScore"),"marketRegime":c.get("marketRegime"),
             "patternSignature":c.get("patternSignature"),"patternSamples":c.get("patternSamples"),
-            "patternSuccessRate":c.get("patternSuccessRate"),"broker":broker,"riskFraction":risk_fraction
+            "patternSuccessRate":c.get("patternSuccessRate"),"broker":broker,"riskFraction":risk_fraction,
+            "strategy":"SWING20" if STRATEGY_MODE=="SWING20" else PROFILE,
+            "strategySignalDate":((swing or {}).get("latest") or {}).get("date") if swing else None
         }
         append_trade({"ts":now_iso(),"side":"BUY","symbol":sym,"priceUsd":price,"shares":shares,"fx":fx,
             "costKrw":round(cost,2),"score":c.get("adjustedScore"),"regime":c.get("marketRegime"),"riskFraction":risk_fraction,
-            "broker":broker,"mode":MODE,"profile":PROFILE})
-        print(now_iso(),"BUY",sym,round(price,4),"cost_krw",round(cost,2),"score",c.get("adjustedScore"),"risk",round(risk_fraction*100,2),"broker",broker,flush=True)
+            "broker":broker,"mode":MODE,"profile":PROFILE,"strategy":state["positions"][sym]["strategy"],
+            "stopPrice":round(structural_stop,4),"takeProfitPrice":round(take_profit,4)})
+        print(now_iso(),"BUY",sym,round(price,4),"cost_krw",round(cost,2),"score",c.get("adjustedScore"),"risk",round(risk_fraction*100,2),"broker",broker,"strategy",state["positions"][sym]["strategy"],flush=True)
         slots-=1
 
 def lock_target(state,quotes,fx,equity):
@@ -263,6 +316,9 @@ def lock_target(state,quotes,fx,equity):
 
 def update_metrics(state,equity,fx,dd,day_loss):
     progress=(equity-START_KRW)/max(1.0,TARGET_KRW-START_KRW)*100
+    state["strategyName"]="20캔들 스윙" if STRATEGY_MODE=="SWING20" else PROFILE
+    state["strategyMode"]=STRATEGY_MODE
+    state["strategySpec"]=swing20_strategy_spec() if STRATEGY_MODE=="SWING20" else {}
     state.update({
         "mode":MODE,"profile":PROFILE,"startKrw":START_KRW,"targetKrw":TARGET_KRW,
         "equityKrw":round(equity,2),"cashKrw":round(float(state["cashKrw"]),2),"usdKrw":fx,
@@ -288,7 +344,15 @@ def main():
             manage_positions(state,quotes,fx)
             eq=equity_krw(state,quotes,fx)
             dd,day_loss=risk_guard(state,eq)
-            maybe_enter(state,candidates.get("candidates") or [],quotes,fx,eq,broker)
+            top_candidates=candidates.get("candidates") or []
+            if STRATEGY_MODE=="SWING20":
+                for c in top_candidates[:8]:
+                    sym=str(c.get("symbol") or "").upper()
+                    if not sym: continue
+                    swing=swing20_for_symbol(sym)
+                    state.setdefault("strategySignals",{})[sym]=swing.get("latest") or {}
+                    state.setdefault("strategyBacktests",{})[sym]=swing.get("backtest") or {}
+            maybe_enter(state,top_candidates,quotes,fx,eq,broker)
             eq=equity_krw(state,quotes,fx)
             eq=lock_target(state,quotes,fx,eq)
             dd,day_loss=risk_guard(state,eq)
