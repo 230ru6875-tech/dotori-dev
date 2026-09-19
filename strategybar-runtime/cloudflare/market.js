@@ -83,7 +83,7 @@ function priorWindowValue(values,index,period,mode){
 }
 export async function fetchHistorySeries(symbol,benchmark="QQQ",range="6mo"){
   const [result,benchResult]=await Promise.all([yahooChart(symbol,range,"1d"),yahooChart(benchmark,range,"1d")]);
-  const q=result.indicators?.quote?.[0]||{},t=result.timestamp||[],c=q.close||[],h=q.high||[],l=q.low||[];
+  const q=result.indicators?.quote?.[0]||{},t=result.timestamp||[],o=q.open||[],c=q.close||[],h=q.high||[],l=q.low||[],v=q.volume||[];
   const bq=benchResult.indicators?.quote?.[0]||{},bt=benchResult.timestamp||[],bc=bq.close||[];
   const benchByDay=new Map();
   bt.forEach((ts,i)=>{if(finite(ts)&&finite(bc[i]))benchByDay.set(new Date(Number(ts)*1000).toISOString().slice(0,10),Number(bc[i]));});
@@ -97,7 +97,12 @@ export async function fetchHistorySeries(symbol,benchmark="QQQ",range="6mo"){
     const rs=finite(benchClose)&&finite(firstClose)&&finite(firstBench)&&firstClose>0&&firstBench>0
       ? (close/firstClose)/(Number(benchClose)/firstBench)*100:null;
     rows.push({
-      date,close:round(close),
+      date,
+      open:finite(o[i])?round(Number(o[i])):null,
+      high:finite(h[i])?round(Number(h[i])):null,
+      low:finite(l[i])?round(Number(l[i])):null,
+      close:round(close),
+      volume:finite(v[i])?Number(v[i]):null,
       ma5:round(rollingValue(c,i,5)),ma20:round(rollingValue(c,i,20)),ma60:round(rollingValue(c,i,60)),ma120:round(rollingValue(c,i,120)),
       turtle20High:round(priorWindowValue(h,i,20,"max")),turtle10Low:round(priorWindowValue(l,i,10,"min")),
       benchmarkClose:finite(benchClose)?round(benchClose):null,relativeStrength:round(rs,2)
