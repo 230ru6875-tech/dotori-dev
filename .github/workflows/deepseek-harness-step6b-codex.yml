@@ -1,0 +1,79 @@
+name: DeepSeek Harness Step 6B Codex Prepare
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step6b-codex.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codex:
+    runs-on: self-hosted
+    env:
+      HARNESS_DIR: /home/ubuntu/projects/deepseek-harness
+      DSH_HOME: /home/ubuntu/.deepseek-harness
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@v4
+
+      - name: Install Codex CLI for native authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6F: INSTALL CODEX CLI ==='
+          sudo env PATH="/usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/bin:/bin" npm install -g @openai/codex@latest
+          test -x /usr/local/bin/codex
+          codex --version
+
+      - name: Install Harness Codex subagent bundle in web profile
+        shell: bash
+        working-directory: /home/ubuntu/projects/deepseek-harness
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6G: INSTALL CODEX SUBAGENT BUNDLE ==='
+          env DSH_HOME="${DSH_HOME}" pnpm dsh plugin --profile web add @deepseek-ai/dsh-subagent-codex
+          env DSH_HOME="${DSH_HOME}" pnpm dsh plugin --profile web list || true
+
+          sudo systemctl restart deepseek-harness.service
+          for i in $(seq 1 45); do
+            if systemctl is-active --quiet deepseek-harness.service && ss -ltn 2>/dev/null | grep -q ':3080 '; then
+              break
+            fi
+            sleep 1
+          done
+          test "$(systemctl is-active deepseek-harness.service)" = "active"
+          ss -ltn 2>/dev/null | grep ':3080 '
+
+      - name: Check Codex authentication status safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6H: CODEX AUTH STATUS ==='
+          set +e
+          codex login status > /tmp/codex-login-status.txt 2>&1
+          RC=$?
+          set -e
+          sed -E 's/(sk-[A-Za-z0-9_-]{8})[A-Za-z0-9_-]*/\1[REDACTED]/g' /tmp/codex-login-status.txt
+          echo "codex_login_status_exit=${RC}"
+          if [ -f /home/ubuntu/.codex/auth.json ]; then
+            echo 'codex_auth_json=PRESENT'
+          else
+            echo 'codex_auth_json=MISSING'
+          fi
+
+      - name: Verify Harness service after Codex bundle install
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6I: SERVICE VERIFY ==='
+          test "$(systemctl is-enabled deepseek-harness.service)" = "enabled"
+          test "$(systemctl is-active deepseek-harness.service)" = "active"
+          HTTP_CODE=$(curl -sS --max-time 3 -o /tmp/dsh-root.txt -w '%{http_code}' http://127.0.0.1:3080/ || true)
+          echo "unauthenticated_http_code=${HTTP_CODE}"
+          test "${HTTP_CODE}" = "401"
+          echo '=== STEP 6B PREP COMPLETE ==='
