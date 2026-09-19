@@ -107,7 +107,7 @@ jobs:
           TOKEN_URL=''
           for i in $(seq 1 45); do
             TOKEN_URL=$(grep -Eo 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' /tmp/dsh-web.log | tail -n1 || true)
-            if [ -n "$TOKEN_URL" ] && curl -fsS --max-time 2 "$TOKEN_URL" -o /tmp/dsh-home.html; then
+            if [ -n "$TOKEN_URL" ] && curl -fLsS --max-time 4 "$TOKEN_URL" -o /tmp/dsh-home.html; then
               OK=1
               break
             fi
@@ -125,8 +125,9 @@ jobs:
             exit 32
           fi
 
-          test -s /tmp/dsh-home.html
-          echo "web_bytes=$(wc -c < /tmp/dsh-home.html)"
+          BYTES=$(wc -c < /tmp/dsh-home.html)
+          echo "web_bytes=$BYTES"
+          test "$BYTES" -gt 100
           echo "web_auth=token_ok"
           ss -ltnp 2>/dev/null | grep ':3080 ' || true
           echo
