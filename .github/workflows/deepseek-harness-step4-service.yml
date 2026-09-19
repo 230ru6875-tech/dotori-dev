@@ -1,0 +1,101 @@
+name: DeepSeek Harness Step 4 Service
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step4-service.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  service:
+    runs-on: self-hosted
+    env:
+      HARNESS_DIR: /home/ubuntu/projects/deepseek-harness
+      DSH_HOME: /home/ubuntu/.deepseek-harness
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@v4
+
+      - name: Install systemd service
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 4A: INSTALL SYSTEMD SERVICE ==='
+
+          test -d "${HARNESS_DIR}/.git"
+          test -x /usr/local/bin/node
+          test -x /usr/local/bin/pnpm
+
+          sudo install -d -o ubuntu -g ubuntu -m 0755 "${DSH_HOME}"
+
+          sudo tee /etc/systemd/system/deepseek-harness.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=DeepSeek Harness Web UI
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          Group=ubuntu
+          WorkingDirectory=/home/ubuntu/projects/deepseek-harness
+          Environment=HOME=/home/ubuntu
+          Environment=DSH_HOME=/home/ubuntu/.deepseek-harness
+          Environment=PATH=/usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
+          ExecStart=/usr/local/bin/pnpm dsh web --no-open
+          Restart=always
+          RestartSec=5
+          TimeoutStopSec=20
+          KillSignal=SIGINT
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable deepseek-harness.service
+          sudo systemctl restart deepseek-harness.service
+
+      - name: Validate persistent service
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 4B: VALIDATE SERVICE ==='
+
+          for i in $(seq 1 45); do
+            if systemctl is-active --quiet deepseek-harness.service && ss -ltn 2>/dev/null | grep -q ':3080 '; then
+              break
+            fi
+            sleep 1
+          done
+
+          test "$(systemctl is-enabled deepseek-harness.service)" = "enabled"
+          test "$(systemctl is-active deepseek-harness.service)" = "active"
+          ss -ltn 2>/dev/null | grep ':3080 '
+
+          HTTP_CODE=$(curl -sS --max-time 3 -o /tmp/dsh-unauth.txt -w '%{http_code}' http://127.0.0.1:3080/ || true)
+          echo "unauthenticated_http_code=${HTTP_CODE}"
+          test "${HTTP_CODE}" = "401"
+
+          TOKEN_URL=$(sudo journalctl -u deepseek-harness.service --since '-3 minutes' --no-pager -o cat | grep -Eo 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' | tail -n1 || true)
+          test -n "${TOKEN_URL}"
+
+          rm -f /tmp/dsh-service-cookies.txt /tmp/dsh-service-home.html
+          curl -sS --max-time 4 -c /tmp/dsh-service-cookies.txt -o /dev/null "${TOKEN_URL}"
+          curl -fsS --max-time 4 -b /tmp/dsh-service-cookies.txt http://127.0.0.1:3080/ -o /tmp/dsh-service-home.html
+
+          BYTES=$(wc -c < /tmp/dsh-service-home.html)
+          echo "authenticated_web_bytes=${BYTES}"
+          test "${BYTES}" -gt 100
+
+          echo
+          echo '--- SERVICE STATUS ---'
+          sudo systemctl --no-pager --full status deepseek-harness.service | sed -E 's#(token=)[A-Za-z0-9_-]+#\1[REDACTED]#g' | head -n 30
+          echo
+          echo '=== STEP 4 COMPLETE ==='
