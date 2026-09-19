@@ -16,7 +16,7 @@ jobs:
     env:
       HARNESS_DIR: /home/ubuntu/projects/deepseek-harness
       HARNESS_REPO: https://github.com/deepseek-ai/deepseek-harness.git
-      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/bin:/bin
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
     steps:
       - name: Checkout control repository
         uses: actions/checkout@v4
@@ -57,20 +57,20 @@ jobs:
         run: |
           set -euo pipefail
           echo '=== STEP 3C: ENSURE SWAP FOR BUILD ==='
-          if ! swapon --show --noheadings | grep -q .; then
+          if ! /usr/sbin/swapon --show --noheadings | grep -q .; then
             if [ ! -f /swapfile ]; then
               sudo fallocate -l 6G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=6144 status=progress
               sudo chmod 600 /swapfile
               sudo mkswap /swapfile
             fi
-            sudo swapon /swapfile
+            sudo /usr/sbin/swapon /swapfile
           fi
           if ! grep -qE '^/swapfile\s' /etc/fstab; then
             echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
           fi
           echo '--- MEMORY AFTER SWAP ---'
           free -h
-          swapon --show
+          /usr/sbin/swapon --show
 
       - name: Build DeepSeek Harness
         shell: bash
