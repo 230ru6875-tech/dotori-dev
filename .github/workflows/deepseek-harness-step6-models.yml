@@ -1,0 +1,159 @@
+name: DeepSeek Harness Step 6 Models Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step6-models.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  models:
+    runs-on: self-hosted
+    env:
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
+      HARNESS_DIR: /home/ubuntu/projects/deepseek-harness
+      DSH_HOME: /home/ubuntu/.deepseek-harness
+      DOTORI_DIR: /home/ubuntu/projects/harness-workspaces/dotori-dev
+      GH_DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      GH_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GH_OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@v4
+
+      - name: Audit model credentials without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6A: MODEL CREDENTIAL AUDIT ==='
+
+          present() {
+            if [ -n "${2:-}" ]; then
+              echo "$1=PRESENT"
+            else
+              echo "$1=MISSING"
+            fi
+          }
+
+          present github_secret_DEEPSEEK_API_KEY "${GH_DEEPSEEK_API_KEY:-}"
+          present github_secret_OPENAI_API_KEY "${GH_OPENAI_API_KEY:-}"
+          present github_secret_OPENROUTER_API_KEY "${GH_OPENROUTER_API_KEY:-}"
+
+          if sudo test -f /etc/deepseek-harness.env; then
+            echo 'service_env_file=PRESENT'
+            sudo awk -F= '
+              /^[A-Za-z_][A-Za-z0-9_]*=/ {
+                if ($1 ~ /(KEY|TOKEN|SECRET|PASSWORD)/) print $1 "=PRESENT";
+                else print $1 "=SET";
+              }
+            ' /etc/deepseek-harness.env
+          else
+            echo 'service_env_file=MISSING'
+          fi
+
+          if [ -f /home/ubuntu/.codex/auth.json ]; then
+            echo 'codex_auth_json=PRESENT'
+          else
+            echo 'codex_auth_json=MISSING'
+          fi
+
+          if command -v codex >/dev/null 2>&1; then
+            echo "codex_cli=$(command -v codex)"
+            codex --version || true
+          else
+            echo 'codex_cli=MISSING'
+          fi
+
+      - name: Install available API credentials into protected service environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6B: SERVICE CREDENTIAL ENV ==='
+
+          TMP=$(mktemp)
+          trap 'rm -f "$TMP"' EXIT
+          chmod 600 "$TMP"
+
+          if [ -n "${GH_DEEPSEEK_API_KEY:-}" ]; then
+            printf 'DEEPSEEK_API_KEY=%s\n' "${GH_DEEPSEEK_API_KEY}" >> "$TMP"
+          fi
+          if [ -n "${GH_OPENAI_API_KEY:-}" ]; then
+            printf 'OPENAI_API_KEY=%s\n' "${GH_OPENAI_API_KEY}" >> "$TMP"
+          fi
+          if [ -n "${GH_OPENROUTER_API_KEY:-}" ]; then
+            printf 'OPENROUTER_API_KEY=%s\n' "${GH_OPENROUTER_API_KEY}" >> "$TMP"
+          fi
+
+          if [ -s "$TMP" ]; then
+            sudo install -m 0600 -o root -g root "$TMP" /etc/deepseek-harness.env
+            echo 'protected_env_installed=yes'
+          else
+            echo 'protected_env_installed=no'
+          fi
+
+          if sudo test -f /etc/deepseek-harness.env; then
+            sudo sed -i '/^EnvironmentFile=-\/etc\/deepseek-harness.env$/d' /etc/systemd/system/deepseek-harness.service
+            sudo sed -i '/^Environment=PATH=/a EnvironmentFile=-/etc/deepseek-harness.env' /etc/systemd/system/deepseek-harness.service
+            sudo systemctl daemon-reload
+            sudo systemctl restart deepseek-harness.service
+          fi
+
+      - name: Inspect shipped model providers
+        shell: bash
+        working-directory: /home/ubuntu/projects/deepseek-harness
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6C: PROVIDER CONFIG ==='
+          pnpm dsh --profile headless --dump-config > /tmp/dsh-headless-config.txt
+          grep -E 'deepseek|llm-pi-ai|provider|model' /tmp/dsh-headless-config.txt | head -n 120 || true
+
+      - name: Test DeepSeek only when credential is available
+        shell: bash
+        working-directory: /home/ubuntu/projects/harness-workspaces/dotori-dev
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6D: DEEPSEEK SMOKE ==='
+
+          KEY=''
+          if sudo test -f /etc/deepseek-harness.env; then
+            KEY=$(sudo sed -n 's/^DEEPSEEK_API_KEY=//p' /etc/deepseek-harness.env | head -n1)
+          fi
+
+          if [ -z "$KEY" ]; then
+            echo 'deepseek_smoke=SKIPPED_NO_CREDENTIAL'
+            exit 0
+          fi
+
+          export DEEPSEEK_API_KEY="$KEY"
+          cd /home/ubuntu/projects/deepseek-harness
+          OUT=$(mktemp)
+          trap 'rm -f "$OUT"' EXIT
+
+          set +e
+          timeout 180s pnpm dsh --profile headless             --provider deepseek-official             --model deepseek-flash             "Reply with exactly: DEEPSEEK_HARNESS_OK" >"$OUT" 2>&1
+          RC=$?
+          set -e
+
+          sed -E 's/(sk-[A-Za-z0-9_-]{8})[A-Za-z0-9_-]*/\1[REDACTED]/g' "$OUT" | tail -n 80
+
+          test "$RC" -eq 0
+          grep -q 'DEEPSEEK_HARNESS_OK' "$OUT"
+          echo 'deepseek_smoke=PASS'
+
+      - name: Verify dotori-dev is ready for model-driven coding
+        shell: bash
+        working-directory: /home/ubuntu/projects/harness-workspaces/dotori-dev
+        run: |
+          set -euo pipefail
+          echo '=== STEP 6E: WORKSPACE READY ==='
+          test -f AGENTS.md
+          test -d .git
+          git diff --quiet -- . || true
+          echo "workspace=$(pwd)"
+          echo "branch=$(git branch --show-current)"
+          echo "tracked_files=$(git ls-files | wc -l)"
+          echo '=== STEP 6 COMPLETE ==='
