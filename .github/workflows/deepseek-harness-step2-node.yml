@@ -58,12 +58,13 @@ jobs:
 
           export PATH="/usr/local/bin:${NODE_DIR}/bin:$PATH"
 
-          corepack enable
-          corepack prepare pnpm@11.7.0 --activate
+          # Keep Corepack available for Harness, but install the exact pnpm
+          # version globally inside the isolated Node 24 tree to avoid
+          # permission issues with Corepack shims in /usr/local/bin.
+          sudo env PATH="${NODE_DIR}/bin:/usr/local/bin:/usr/bin:/bin" "${NODE_DIR}/bin/npm" install -g pnpm@11.7.0
 
-          if [ -x "${NODE_DIR}/bin/pnpm" ]; then
-            sudo ln -sfn "${NODE_DIR}/bin/pnpm" /usr/local/bin/pnpm
-          fi
+          test -x "${NODE_DIR}/bin/pnpm"
+          sudo ln -sfn "${NODE_DIR}/bin/pnpm" /usr/local/bin/pnpm
           if [ -x "${NODE_DIR}/bin/pnpx" ]; then
             sudo ln -sfn "${NODE_DIR}/bin/pnpx" /usr/local/bin/pnpx
           fi
