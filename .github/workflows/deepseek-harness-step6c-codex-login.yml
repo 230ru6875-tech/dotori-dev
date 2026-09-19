@@ -1,0 +1,37 @@
+name: DeepSeek Harness Step 6C Codex Login Help
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step6c-codex-login.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  login-help:
+    runs-on: self-hosted
+    env:
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@v4
+
+      - name: Inspect Codex login commands safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== CODEX VERSION ==='
+          codex --version
+          echo
+          echo '=== CODEX LOGIN HELP ==='
+          codex login --help
+          echo
+          echo '=== CODEX AUTH STATUS ==='
+          set +e
+          codex login status
+          RC=$?
+          set -e
+          echo "status_exit=${RC}"
