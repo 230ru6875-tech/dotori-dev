@@ -1,0 +1,137 @@
+name: DeepSeek Harness Step 5 Workspace
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step5-workspace.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workspace:
+    runs-on: self-hosted
+    env:
+      WORKSPACE_ROOT: /home/ubuntu/projects/harness-workspaces
+      DOTORI_DIR: /home/ubuntu/projects/harness-workspaces/dotori-dev
+      DOTORI_REPO: https://github.com/230ru6875-tech/dotori-dev.git
+      PATH: /usr/local/bin:/opt/node-v24.21.0-linux-x64/bin:/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin
+    steps:
+      - name: Checkout control repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Harness workspace root
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 5A: PREPARE WORKSPACE ==='
+          sudo install -d -o ubuntu -g ubuntu -m 0755 "${WORKSPACE_ROOT}"
+
+      - name: Clone or refresh dotori-dev workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 5B: DOTORI-DEV WORKSPACE ==='
+
+          if [ -d "${DOTORI_DIR}/.git" ]; then
+            git -C "${DOTORI_DIR}" remote set-url origin "${DOTORI_REPO}"
+            git -C "${DOTORI_DIR}" fetch --prune origin
+            git -C "${DOTORI_DIR}" checkout main
+            git -C "${DOTORI_DIR}" reset --hard origin/main
+            git -C "${DOTORI_DIR}" clean -fd
+          else
+            rm -rf "${DOTORI_DIR}"
+            git clone "${DOTORI_REPO}" "${DOTORI_DIR}"
+          fi
+
+          git -C "${DOTORI_DIR}" config user.name "DeepSeek Harness EC2"
+          git -C "${DOTORI_DIR}" config user.email "deepseek-harness@localhost"
+
+          echo "workspace=${DOTORI_DIR}"
+          echo "origin=$(git -C "${DOTORI_DIR}" remote get-url origin)"
+          echo "branch=$(git -C "${DOTORI_DIR}" branch --show-current)"
+          echo "commit=$(git -C "${DOTORI_DIR}" rev-parse HEAD)"
+          test "$(git -C "${DOTORI_DIR}" branch --show-current)" = "main"
+
+      - name: Add project safety instructions
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 5C: PROJECT INSTRUCTIONS ==='
+
+          cat > "${DOTORI_DIR}/AGENTS.md" <<'DOC'
+          # DeepSeek Harness / Codex workspace instructions
+
+          This checkout is the EC2 coding workspace for dotori-dev.
+
+          ## Required workflow
+          - Inspect existing code and tests before changing behavior.
+          - Keep changes small and reviewable.
+          - Run the relevant tests before reporting success.
+          - Do not claim deployment success until the actual workflow and production validation pass.
+          - Never print, copy, commit, or expose credentials, API keys, brokerage secrets, tokens, or environment files.
+
+          ## Trading safety
+          - HamburgerTrader and StrategyBar changes default to PAPER/SHADOW.
+          - Do not enable live brokerage ordering, live-order gates, or automatic real-money execution without an explicit human-approved step.
+          - Never weaken risk gates merely to make a test pass.
+          - Treat broker credentials and order endpoints as privileged resources.
+
+          ## Git
+          - Local edits and commits are allowed in this workspace.
+          - Do not force-push, rewrite remote history, or delete remote branches.
+          - Remote push requires separately configured GitHub credentials; absence of credentials is not an error for local coding/testing.
+          DOC
+
+          mkdir -p "${DOTORI_DIR}/.dsh"
+          cat > "${DOTORI_DIR}/.dsh/README.md" <<'DOC'
+          # Harness project marker
+
+          This directory marks dotori-dev as a DeepSeek Harness project workspace.
+          Project instructions are in ../AGENTS.md.
+          DOC
+
+          git -C "${DOTORI_DIR}" status --short
+
+      - name: Audit HamburgerTrader source on EC2
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 5D: HAMBURGERTRADER SOURCE AUDIT ==='
+          FOUND=''
+          for d in             /home/ubuntu/projects/HamburgerTrader             /home/ubuntu/HamburgerTrader             /opt/HamburgerTrader             /home/ubuntu/projects/hamburgertrader             /home/ubuntu/projects/hamburger-trader; do
+            if [ -d "$d" ]; then
+              echo "found=$d"
+              FOUND="$d"
+              if [ -d "$d/.git" ]; then
+                echo "git_origin=$(git -C "$d" remote get-url origin 2>/dev/null || true)"
+                echo "git_commit=$(git -C "$d" rev-parse HEAD 2>/dev/null || true)"
+              fi
+            fi
+          done
+          if [ -z "$FOUND" ]; then
+            echo 'hamburgertrader_source=NOT_PRESENT_ON_EC2'
+          fi
+
+      - name: Verify Harness can operate on dotori-dev
+        shell: bash
+        working-directory: /home/ubuntu/projects/harness-workspaces/dotori-dev
+        run: |
+          set -euo pipefail
+          echo '=== STEP 5E: VERIFY WORKSPACE ==='
+          test -f AGENTS.md
+          test -d .dsh
+          test -d .git
+          git status --short
+          python3 --version
+          node --version
+          git --version
+
+          # Verify the repository can be inspected without exposing secrets.
+          FILE_COUNT=$(git ls-files | wc -l)
+          echo "tracked_files=${FILE_COUNT}"
+          test "${FILE_COUNT}" -gt 10
+
+          echo '=== STEP 5 COMPLETE ==='
