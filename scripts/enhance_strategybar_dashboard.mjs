@@ -96,7 +96,7 @@ const style=String.raw`
 </style>`;
 
 const injection=String.raw`
-<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v15">
+<script id="strategybar-enhancer-script" data-market-label-version="market-repair-ws-v16">
 (function(){
   var labels={
     '^GSPC':'S&P 500','^NDX':'나스닥 100','^SOX':'필라델피아 반도체','^RUT':'러셀 2000','^VIX':'VIX',
@@ -616,6 +616,10 @@ h1{font-size:22px;margin:0}.badge{display:inline-block;margin-top:10px;font-size
 table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;border-bottom:1px solid #1f2937;text-align:left}th{color:#94a3b8;font-weight:600}
 .empty{color:#94a3b8;font-size:12px}.warn{color:#fca5a5}.muted{color:#94a3b8;font-size:11px;margin-top:10px}
 .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid #334155;background:#111827;color:#e5e7eb;border-radius:8px;padding:7px 10px;cursor:pointer}
+.strategy-rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px;margin-bottom:10px}
+.strategy-rule{border:1px solid #1f2937;border-radius:8px;padding:8px;background:#0b1220;font-size:11px;color:#cbd5e1}
+.strategy-rule b{color:#f8fafc}.strategy-rule code{display:block;margin-top:4px;color:#93c5fd;white-space:normal;overflow-wrap:anywhere}
+.signal-yes{color:#86efac;font-weight:800}.signal-no{color:#94a3b8}.bt-good{color:#86efac}.bt-bad{color:#fca5a5}
 </style>
 </head>
 <body>
@@ -627,6 +631,11 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
   <div id="mode" class="badge">상태 확인 중…</div>
   <div class="grid" id="cards"></div>
   <div class="progress"><span id="bar"></span></div>
+  <div class="section">
+    <h2>전략 · 20캔들 스윙</h2>
+    <div id="strategyRules" class="strategy-rules"><div class="empty">전략 불러오는 중…</div></div>
+    <div id="strategySignals"><div class="empty">신호/백테스트 불러오는 중…</div></div>
+  </div>
   <div class="section"><h2>보유 종목 (PAPER)</h2><div id="positions"><div class="empty">불러오는 중…</div></div></div>
   <div class="section"><h2>상태</h2><div id="status" class="empty">불러오는 중…</div></div>
 </div>
@@ -652,13 +661,241 @@ table{width:100%;border-collapse:collapse;font-size:12px}th,td{padding:8px;borde
       d.children[0].textContent=c[0];d.children[1].textContent=c[1];host.appendChild(d);
     });
     document.getElementById('bar').style.width=Math.max(0,Math.min(100,Number(s.progressPct||0)))+'%';
+
+    var spec=s.strategySpec||{},sourceRules=(spec.sourceEntryRules||{}),paperRules=(spec.paperBacktestRules||{});
+    var rules=document.getElementById('strategyRules');
+    var ruleRows=[
+      ['① 120봉 최고가',sourceRules.high120||'max(high[i-119:i+1])'],
+      ['② 30봉 전 기준 20봉 최고가',sourceRules.high20Shift30||'max(high[i-49:i-29])'],
+      ['③ 푸른존',sourceRules.blueZone||'high120 == high20Shift30'],
+      ['④ 60일선 상향돌파',sourceRules.crossUpMa60||'close[i-1] <= ma60[i-1] and close[i] > ma60[i]'],
+      ['⑤ 양봉',sourceRules.bullish||'close[i] > open[i]'],
+      ['⑥ 거래량 250%',sourceRules.volume250||'volume[i] >= 2.5 * volume[i-1]']
+    ];
+    rules.innerHTML=ruleRows.map(function(r){return '<div class="strategy-rule"><b>'+r[0]+'</b><code>'+r[1]+'</code></div>';}).join('');
+    rules.innerHTML+='<div class="strategy-rule"><b>매수</b><code>'+(paperRules.entry||'next bar open')+'</code></div>';
+    rules.innerHTML+='<div class="strategy-rule"><b>손절</b><code>'+(paperRules.initialStop||'max(signal low, entry*0.93)')+'</code></div>';
+    rules.innerHTML+='<div class="strategy-rule"><b>익절/추적</b><code>'+(paperRules.takeProfit||'2R')+' · '+(paperRules.trail||'after +1R, prior 10-bar low')+'</code></div>';
+
+    var signals=s.strategySignals||{},backtests=s.strategyBacktests||{},symbols=Object.keys(signals);
+    var sh=document.getElementById('strategySignals');
+    if(!symbols.length){
+      sh.innerHTML='<div class="empty">후보 종목의 20캔들 전략 데이터를 계산 중입니다.</div>';
+    }else{
+      var html='<table><thead><tr><th>티커</th><th>푸른존</th><th>60선돌파</th><th>거래량배수</th><th>매수신호</th><th>최근신호</th><th>백테스트</th></tr></thead><tbody>';
+      symbols.forEach(function(sym){
+        var x=signals[sym]||{},bt=backtests[sym]||{};
+        var win=bt.winRate==null?'--':(Number(bt.winRate)*100).toFixed(0)+'%';
+        var ret=bt.ready?((Number(bt.totalReturnPct)>=0?'+':'')+Number(bt.totalReturnPct||0).toFixed(1)+'%'):'--';
+        var cls=bt.ready&&Number(bt.totalReturnPct)>=0?'bt-good':'bt-bad';
+        html+='<tr><td><b>'+sym+'</b></td><td>'+(x.blueZone?'YES':'-')+'</td><td>'+(x.crossUpMa60?'YES':'-')+'</td><td>'+(Number(x.volumeRatioPrev||0)>0?Number(x.volumeRatioPrev).toFixed(2)+'x':'--')+'</td><td class="'+(x.signal?'signal-yes':'signal-no')+'">'+(x.signal?'매수신호':'대기')+'</td><td>'+(x.lastSignalDate||'--')+'</td><td class="'+cls+'">'+(bt.trades||0)+'회 · 승률 '+win+' · '+ret+'</td></tr>';
+      });
+      sh.innerHTML=html+'</tbody></table><div class="muted">백테스트는 신호 확정 후 다음 봉 시가 진입, 신호봉 저가/최대 -7% 손절, 2R 익절, +1R 이후 10봉 저가 추적, 60일선 종가 이탈 시 다음 봉 시가 청산, 최대 120봉 보유를 사용합니다. 이 청산 규칙은 영상에 수치가 제시되지 않아 PAPER 검증용으로 명시한 규칙입니다.</div>';
+    }
+
     var pos=Object.values(s.positions||{}),ph=document.getElementById('positions');
     if(!pos.length){
       ph.innerHTML='<div class="empty">보유 종목 없음</div>';
     }else{
       var html='<table><thead><tr><th>종목</th><th>수량</th><th>진입가</th><th>현재가</th><th>손절가</th><th>브로커</th></tr></thead><tbody>';
       pos.forEach(function(x){
-        html+='<tr><td>'+String(x.symbol||'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>$'+Number(x.entryPrice||0).toFixed(2)+'</td><td>$'+Number(x.lastPrice||0).toFixed(2)+'</td><td>$'+Number(x.stopPrice||0).toFixed(2)+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';
+        html+='<tr><td>'+String(x.symbol||'')+(x.strategy?' <span class="muted">'+x.strategy+'</span>':'')+'</td><td>'+Number(x.shares||0).toFixed(4)+'</td><td>
+      });
+      ph.innerHTML=html+'</tbody></table>';
+    }
+    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
+  }
+
+  async function load(){
+    var mode=document.getElementById('mode');
+    var cached=null;
+    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
+    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
+
+    var controller=new AbortController();
+    var timer=setTimeout(function(){controller.abort();},3500);
+    try{
+      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      var p=await r.json(),state=p&&p.state;
+      if(!state)throw new Error('state empty');
+      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
+      renderState(state,false);
+    }catch(e){
+      if(!cached){
+        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
+        mode.className='badge warn';
+        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
+      }
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
+  document.getElementById('refresh').onclick=load;
+  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
+  load();
+  setInterval(load,10000);
+})();
+</script>
+</body></html>`;
+
+const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
+if(!investmentScript)throw new Error('investment script extraction failed');
+const investmentCheck='/tmp/strategybar-investment-check.js';
+fs.writeFileSync(investmentCheck,investmentScript[1]);
+execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
+fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
+
+console.log('Applied StrategyBar WebSocket live quote enhancer v16 with 20-candle swing strategy panel.');
++Number(x.entryPrice||0).toFixed(2)+'</td><td>
+      });
+      ph.innerHTML=html+'</tbody></table>';
+    }
+    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
+  }
+
+  async function load(){
+    var mode=document.getElementById('mode');
+    var cached=null;
+    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
+    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
+
+    var controller=new AbortController();
+    var timer=setTimeout(function(){controller.abort();},3500);
+    try{
+      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      var p=await r.json(),state=p&&p.state;
+      if(!state)throw new Error('state empty');
+      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
+      renderState(state,false);
+    }catch(e){
+      if(!cached){
+        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
+        mode.className='badge warn';
+        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
+      }
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
+  document.getElementById('refresh').onclick=load;
+  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
+  load();
+  setInterval(load,10000);
+})();
+</script>
+</body></html>`;
+
+const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
+if(!investmentScript)throw new Error('investment script extraction failed');
+const investmentCheck='/tmp/strategybar-investment-check.js';
+fs.writeFileSync(investmentCheck,investmentScript[1]);
+execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
+fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
+
+console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
++Number(x.lastPrice||0).toFixed(2)+'</td><td>
+      });
+      ph.innerHTML=html+'</tbody></table>';
+    }
+    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
+  }
+
+  async function load(){
+    var mode=document.getElementById('mode');
+    var cached=null;
+    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
+    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
+
+    var controller=new AbortController();
+    var timer=setTimeout(function(){controller.abort();},3500);
+    try{
+      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      var p=await r.json(),state=p&&p.state;
+      if(!state)throw new Error('state empty');
+      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
+      renderState(state,false);
+    }catch(e){
+      if(!cached){
+        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
+        mode.className='badge warn';
+        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
+      }
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
+  document.getElementById('refresh').onclick=load;
+  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
+  load();
+  setInterval(load,10000);
+})();
+</script>
+</body></html>`;
+
+const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
+if(!investmentScript)throw new Error('investment script extraction failed');
+const investmentCheck='/tmp/strategybar-investment-check.js';
+fs.writeFileSync(investmentCheck,investmentScript[1]);
+execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
+fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
+
+console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
++Number(x.stopPrice||0).toFixed(2)+(Number(x.takeProfitPrice||0)>0?' / TP 
+      });
+      ph.innerHTML=html+'</tbody></table>';
+    }
+    document.getElementById('status').innerHTML='<div>마지막 갱신: '+String(s.lastCycle||s.updatedAt||'')+'</div><div>일시중지: '+(s.paused?'예':'아니오')+'</div><div>Kill Switch: '+(s.killSwitch?'작동':'정상')+'</div><div>목표달성: '+(s.goalReached?'예':'아니오')+'</div>';
+  }
+
+  async function load(){
+    var mode=document.getElementById('mode');
+    var cached=null;
+    try{cached=JSON.parse(localStorage.getItem('strategybar_survival_state_v1')||'null');}catch(e){}
+    if(cached)renderState(cached,true);else mode.textContent='상태 확인 중…';
+
+    var controller=new AbortController();
+    var timer=setTimeout(function(){controller.abort();},3500);
+    try{
+      var r=await fetch('/api/survival?t='+Date.now(),{cache:'no-store',signal:controller.signal});
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      var p=await r.json(),state=p&&p.state;
+      if(!state)throw new Error('state empty');
+      localStorage.setItem('strategybar_survival_state_v1',JSON.stringify(state));
+      renderState(state,false);
+    }catch(e){
+      if(!cached){
+        mode.textContent=e&&e.name==='AbortError'?'상태 응답 지연 · 자동 재시도':'투자 상태를 불러오지 못했습니다';
+        mode.className='badge warn';
+        document.getElementById('status').textContent=e&&e.name==='AbortError'?'3.5초 안에 응답하지 않아 자동 재시도합니다.':String(e);
+      }
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
+  document.getElementById('refresh').onclick=load;
+  document.getElementById('back').onclick=function(){location.href='/?view=1&tab=dashboard';};
+  load();
+  setInterval(load,10000);
+})();
+</script>
+</body></html>`;
+
+const investmentScript=investmentHtml.match(/<script[^>]*>([\s\S]*)<\/script>/i);
+if(!investmentScript)throw new Error('investment script extraction failed');
+const investmentCheck='/tmp/strategybar-investment-check.js';
+fs.writeFileSync(investmentCheck,investmentScript[1]);
+execFileSync(process.execPath,['--check',investmentCheck],{stdio:'inherit'});
+fs.writeFileSync('strategybar-runtime/dist/investment.html',investmentHtml);
+
+console.log('Applied StrategyBar WebSocket live quote enhancer v15 with tablet portrait layout and English-only tickers.');
++Number(x.takeProfitPrice).toFixed(2):'')+'</td><td>'+String(x.broker||s.activeBroker||'NAMUH')+'</td></tr>';
       });
       ph.innerHTML=html+'</tbody></table>';
     }
