@@ -1,0 +1,73 @@
+name: DeepSeek Harness Step 1 Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deepseek-harness-step1-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Audit EC2 for DeepSeek Harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STEP 1: EC2 AUDIT ==='
+          echo "user=$(whoami)"
+          echo "home=$HOME"
+          echo "pwd=$(pwd)"
+          echo
+          echo '--- OS ---'
+          cat /etc/os-release
+          echo
+          echo '--- CPU / MEMORY / DISK ---'
+          nproc
+          free -h
+          df -h /
+          echo
+          echo '--- REQUIRED TOOLS ---'
+          for cmd in git node npm corepack pnpm python3 curl; do
+            if command -v "$cmd" >/dev/null 2>&1; then
+              printf '%-10s %s\n' "$cmd" "$(command -v "$cmd")"
+              case "$cmd" in
+                git) git --version ;;
+                node) node --version ;;
+                npm) npm --version ;;
+                corepack) corepack --version ;;
+                pnpm) pnpm --version ;;
+                python3) python3 --version ;;
+                curl) curl --version | head -n1 ;;
+              esac
+            else
+              printf '%-10s MISSING\n' "$cmd"
+            fi
+          done
+          echo
+          echo '--- PORT 3080 ---'
+          if ss -ltnp 2>/dev/null | grep -q ':3080 '; then
+            ss -ltnp 2>/dev/null | grep ':3080 ' || true
+          else
+            echo 'port 3080 is free'
+          fi
+          echo
+          echo '--- EXISTING DIRECTORIES ---'
+          for d in "$HOME/projects" "$HOME/projects/deepseek-harness" "/opt/deepseek-harness"; do
+            if [ -e "$d" ]; then
+              ls -ld "$d"
+            else
+              echo "missing: $d"
+            fi
+          done
+          echo
+          echo '--- GITHUB RUNNER ---'
+          systemctl --no-pager --type=service 2>/dev/null | grep -Ei 'actions.runner|github' || true
+          echo '=== STEP 1 COMPLETE ==='
