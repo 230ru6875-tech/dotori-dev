@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -19,11 +20,30 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: 6ead7cb11a99b93959c5437fbcd01eb7
       PROJECT_NAME: dotoristock
       CUSTOM_DOMAIN: dotoristock.com
+      AWS_REGION: ap-northeast-2
+      AWS_DEPLOY_ROLE_ARN: arn:aws:iam::722630232019:role/Survival1000-GitHubDeployRole
+      STACK_NAME: survival1000-foundation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Configure short-lived AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: Dotoristock-YouTubeFeed
+          mask-aws-account-id: true
+      - name: Bind public YouTube feed
+        run: |
+          set -euo pipefail
+          STATUS_URL="$(aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --query "Stacks[0].Outputs[?OutputKey=='DashboardStatusUrl'].OutputValue" --output text)"
+          test -n "${STATUS_URL}"
+          API="${STATUS_URL%/}/public/youtube"
+          sed -i "s|__YOUTUBE_API__|${API}|g" dotoristock/youtube-market.html
+          grep -q '/public/youtube' dotoristock/youtube-market.html
+          curl -fsS "${API}" | jq -e '.source == "Survival1000 YouTube market scan" and (.themes|type=="array") and (.videos|type=="array")'
       - name: Verify source
         run: |
           grep -q '<title>미국주식으로 돈벌기 프로젝트</title>' dotoristock/index.html
