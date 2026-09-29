@@ -308,7 +308,7 @@ async function scheduledRefresh(env) {
 function secureAsset(response) {
   const next=new Response(response.body,response); next.headers.set("x-content-type-options","nosniff"); next.headers.set("referrer-policy","strict-origin-when-cross-origin");
   next.headers.set("permissions-policy","camera=(), microphone=(), geolocation=()");
-  next.headers.set("x-frame-options","DENY"); next.headers.set("x-robots-tag","noindex, nofollow, noarchive"); return next;
+  next.headers.set("x-frame-options","DENY"); next.headers.set("x-robots-tag","index, follow, max-image-preview:large"); return next;
 }
 
 export default {
@@ -329,7 +329,7 @@ export default {
       if (request.method==="GET"&&url.pathname==="/api/candidates") return await candidatesGet(request,env);
       if (request.method==="GET"&&url.pathname==="/api/analysis") return await analysisGet(request,env);
       if (request.method==="POST"&&url.pathname==="/api/analysis") return await analysisPost(request,env);
-      if (request.method==="GET"&&url.pathname==="/robots.txt") return new Response("User-agent: *\nDisallow: /\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=86400"}});
+      if (request.method==="GET"&&url.pathname==="/robots.txt") return new Response("User-agent: *\\nAllow: /\\n\\nUser-agent: GPTBot\\nAllow: /\\n\\nUser-agent: OAI-SearchBot\\nAllow: /\\n\\nSitemap: https://dotoristock.com/sitemap.xml\\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=86400"}});\n      if (request.method==="GET"&&url.pathname==="/sitemap.xml") return new Response('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://dotoristock.com/</loc></url></urlset>',{headers:{"content-type":"application/xml; charset=utf-8","cache-control":"public, max-age=86400"}});\n      if (request.method==="GET"&&url.pathname==="/llms.txt") return new Response("미국주식으로 돈벌기 프로젝트\\nCanonical: https://dotoristock.com/\\n미국주식 시장지표, 종목 발굴, 투자 실험과 PAPER 검증을 추적하는 도토리스톡 프로젝트.\\n",{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=86400"}});
       if (url.pathname.startsWith("/api/")) return json({ok:false,error:"Not found"},404);
       return secureAsset(await env.ASSETS.fetch(request));
     } catch (error) { return json({ok:false,error:error instanceof Error?error.message:"Unexpected error"},500); }
