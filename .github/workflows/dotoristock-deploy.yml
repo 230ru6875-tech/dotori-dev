@@ -1,0 +1,41 @@
+name: Dotoristock Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dotoristock/**'
+      - '.github/workflows/dotoristock-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 6ead7cb11a99b93959c5437fbcd01eb7
+      PROJECT_NAME: dotoristock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify source
+        run: |
+          grep -q '<title>미국주식으로 돈벌기 프로젝트</title>' dotoristock/index.html
+          grep -q 'OAI-SearchBot' dotoristock/robots.txt
+          grep -q 'https://dotoristock.com/' dotoristock/sitemap.xml
+      - name: Deploy to Cloudflare Pages
+        run: |
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          npx --yes wrangler@4.119.0 pages deploy dotoristock --project-name "${PROJECT_NAME}" --branch main
+      - name: Verify public domain
+        run: |
+          sleep 8
+          curl -fsSL --retry 5 --retry-delay 3 https://dotoristock.com/ -o /tmp/index.html
+          grep -q '<title>미국주식으로 돈벌기 프로젝트</title>' /tmp/index.html
+          curl -fsSL https://dotoristock.com/robots.txt | grep -q 'OAI-SearchBot'
+          curl -fsSL https://dotoristock.com/sitemap.xml | grep -q 'https://dotoristock.com/'
