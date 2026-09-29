@@ -11,6 +11,7 @@ on:
       - 'scripts/fix_strategybar_index_after_provider_patch.mjs'
       - 'scripts/patch_strategybar_force_cache.mjs'
       - 'scripts/enhance_strategybar_dashboard.mjs'
+      - 'scripts/patch_strategybar_seo.mjs'
       - 'tests/strategybar-watchdog.spec.js'
       - 'tests/smoke.spec.js'
       - '.github/workflows/strategybar-deploy.yml'
@@ -86,6 +87,14 @@ jobs:
           set -euo pipefail
           node scripts/enhance_strategybar_dashboard.mjs
           grep -q 'strategybar-enhancer-script' strategybar-runtime/dist/index.html
+
+      - name: Fix project title and search metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/patch_strategybar_seo.mjs
+          grep -q '<title>미국주식으로 돈벌기 프로젝트</title>' strategybar-runtime/dist/index.html
+          grep -q 'https://dotoristock.com/' strategybar-runtime/dist/index.html
 
       - name: Resolve existing D1 database binding
         shell: bash
