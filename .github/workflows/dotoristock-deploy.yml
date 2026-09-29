@@ -43,6 +43,20 @@ jobs:
           API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT_NAME}/domains"
           CURRENT="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}")"
           echo "${CURRENT}" | jq -e --arg d "${CUSTOM_DOMAIN}" '.result[]? | select(.name==$d)' >/dev/null ||             curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json"               --data "{\"name\":\"${CUSTOM_DOMAIN}\"}" "${API}" | tee /tmp/domain.json | jq -e '.success == true'
+      - name: Diagnose custom domain and DNS
+        run: |
+          set -euo pipefail
+          DOMAIN_API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT_NAME}/domains"
+          echo "=== Pages custom domain ==="
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${DOMAIN_API}" | jq '.result[] | select(.name=="dotoristock.com") | {name,status,verification_data,validation_data}'
+          echo "=== Zone lookup ==="
+          ZONES="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/zones?name=dotoristock.com")"
+          echo "${ZONES}" | jq '{success, zones:[.result[]|{id,name,status}]}'
+          ZONE_ID="$(echo "${ZONES}" | jq -r '.result[0].id // empty')"
+          if [ -n "${ZONE_ID}" ]; then
+            echo "=== Apex DNS ==="
+            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records?name=dotoristock.com" | jq '{success,records:[.result[]|{id,type,name,content,proxied}]}'
+          fi
       - name: Verify Pages deployment
         run: npx --yes wrangler@4.119.0 pages deployment list --project-name "${PROJECT_NAME}"
       - name: Verify public domain
