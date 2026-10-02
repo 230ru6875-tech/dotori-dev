@@ -57,12 +57,17 @@ jobs:
           fi
       - name: Deploy to Cloudflare Pages
         run: npx --yes wrangler@4.119.0 pages deploy dotoristock --project-name "${PROJECT_NAME}" --branch main
-      - name: Ensure custom domain
+      - name: Release legacy custom domain for Survival1000
         run: |
           set -euo pipefail
           API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT_NAME}/domains"
           CURRENT="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}")"
-          echo "${CURRENT}" | jq -e --arg d "${CUSTOM_DOMAIN}" '.result[]? | select(.name==$d)' >/dev/null ||             curl -fsS -X POST -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json"               --data "{\"name\":\"${CUSTOM_DOMAIN}\"}" "${API}" | tee /tmp/domain.json | jq -e '.success == true'
+          if echo "${CURRENT}" | jq -e --arg d "${CUSTOM_DOMAIN}" '.result[]? | select(.name==$d)' >/dev/null; then
+            curl -fsS -X DELETE -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}/${CUSTOM_DOMAIN}" | jq -e '.success == true'
+            echo "Released ${CUSTOM_DOMAIN} from legacy Pages project."
+          else
+            echo "${CUSTOM_DOMAIN} is already released from legacy Pages project."
+          fi
       - name: Diagnose custom domain and DNS
         run: |
           set -euo pipefail
@@ -79,10 +84,13 @@ jobs:
           fi
       - name: Verify Pages deployment
         run: npx --yes wrangler@4.119.0 pages deployment list --project-name "${PROJECT_NAME}"
-      - name: Verify public domain
+      - name: Verify legacy domain released
         run: |
-          sleep 15
-          curl -fsSL --retry 8 --retry-delay 5 https://dotoristock.com/ -o /tmp/index.html
-          grep -q '<title>미국주식으로 돈벌기 프로젝트</title>' /tmp/index.html
-          curl -fsSL https://dotoristock.com/robots.txt | grep -q 'OAI-SearchBot'
-          curl -fsSL https://dotoristock.com/sitemap.xml | grep -q 'https://dotoristock.com/'
+          set -euo pipefail
+          API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PROJECT_NAME}/domains"
+          CURRENT="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}")"
+          if echo "${CURRENT}" | jq -e --arg d "${CUSTOM_DOMAIN}" '.result[]? | select(.name==$d)' >/dev/null; then
+            echo "${CUSTOM_DOMAIN} is still attached to legacy Pages."
+            exit 1
+          fi
+          echo "Legacy Pages custom domain release: PASS"
