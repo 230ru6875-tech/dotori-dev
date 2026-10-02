@@ -68,6 +68,18 @@ jobs:
           else
             echo "${CUSTOM_DOMAIN} is already released from legacy Pages project."
           fi
+      - name: Attach dotoristock.com to Survival1000 Worker
+        run: |
+          set -euo pipefail
+          ZONES="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/zones?name=dotoristock.com")"
+          ZONE_ID="$(echo "${ZONES}" | jq -r '.result[0].id // empty')"
+          test -n "${ZONE_ID}"
+          API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains"
+          for HOST in dotoristock.com www.dotoristock.com; do
+            curl -fsS -X PUT "${API}"               -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}"               -H "Content-Type: application/json"               --data "$(jq -nc --arg h "${HOST}" --arg z "${ZONE_ID}" '{hostname:$h,service:"survival1000-us-dashboard",zone_id:$z,zone_name:"dotoristock.com"}')"               | tee "/tmp/worker-domain-${HOST}.json" | jq -e '.success == true'
+          done
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${API}?service=survival1000-us-dashboard"             | jq -e '[.result[]?.hostname] | index("dotoristock.com") != null'
+
       - name: Diagnose custom domain and DNS
         run: |
           set -euo pipefail
