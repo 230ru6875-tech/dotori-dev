@@ -1,0 +1,58 @@
+name: Dotoristock Domain Handoff
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dotoristock-domain-handoff.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  handoff:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 6ead7cb11a99b93959c5437fbcd01eb7
+      PAGES_PROJECT: dotoristock
+      WORKER_SERVICE: survival1000-us-dashboard
+    steps:
+      - name: Release Pages domain and attach Worker custom domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          PAGES_API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PAGES_PROJECT}/domains"
+          CURRENT="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${PAGES_API}")"
+          if echo "${CURRENT}" | jq -e '.result[]? | select(.name=="dotoristock.com")' >/dev/null; then
+            curl -fsS -X DELETE -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${PAGES_API}/dotoristock.com" | jq -e '.success==true'
+          fi
+          ZONES="$(curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "https://api.cloudflare.com/client/v4/zones?name=dotoristock.com")"
+          ZONE_ID="$(echo "${ZONES}" | jq -r '.result[0].id // empty')"
+          test -n "${ZONE_ID}"
+          WORKERS_API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains"
+          for HOST in dotoristock.com www.dotoristock.com; do
+            BODY="$(jq -nc --arg h "${HOST}" --arg z "${ZONE_ID}" --arg s "${WORKER_SERVICE}" '{hostname:$h,service:$s,zone_id:$z,zone_name:"dotoristock.com"}')"
+            curl -fsS -X PUT "${WORKERS_API}" -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" -H "Content-Type: application/json" --data "${BODY}" | jq -e '.success==true'
+          done
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${WORKERS_API}" |
+            jq -e --arg s "${WORKER_SERVICE}" '[.result[]? | select(.service==$s) | .hostname] as $h | ($h|index("dotoristock.com")!=null) and ($h|index("www.dotoristock.com")!=null)'
+      - name: Verify fixed address serves Survival1000
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in $(seq 1 36); do
+            CODE="$(curl -sS -o /tmp/root.html -w '%{http_code}' https://dotoristock.com/ || true)"
+            API_CODE="$(curl -sS -o /tmp/status.json -w '%{http_code}' https://dotoristock.com/api/status || true)"
+            if [ "${CODE}" = 200 ] && [ "${API_CODE}" = 200 ] && grep -F 'Survival1000' /tmp/root.html >/dev/null && jq -e '.project=="Survival1000-US"' /tmp/status.json >/dev/null; then
+              jq -e '.safety.live_order_allowed==false and .safety.live_runtime_unlock==false and .safety.broker_submit_enabled==false' /tmp/status.json >/dev/null
+              echo "DOTORISTOCK DOMAIN HANDOFF: PASS"
+              exit 0
+            fi
+            echo "waiting attempt=${n} root=${CODE} api=${API_CODE}"
+            sleep 10
+          done
+          echo "DOTORISTOCK DOMAIN HANDOFF: FAIL"
+          exit 1
